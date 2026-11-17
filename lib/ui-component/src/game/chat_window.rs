@@ -1115,8 +1115,14 @@ impl InGameWindow for ChatWindow {
             input_h,
         );
         let msg_x = chat_x + MSG_NATIVE_X * tex_scale;
-        let msg_right = (chat_x + (TEX_NATIVE_W - MSG_NATIVE_RIGHT) * tex_scale)
-            .min(channel_bubble.x - INPUT_GAP);
+        // the frameless HUD draws no bubbles: the line runs on to where they were
+        let bubbles_left = if self.frameless {
+            height_bubble.x + BUBBLE_SIZE
+        } else {
+            channel_bubble.x - INPUT_GAP
+        };
+        let msg_right =
+            (chat_x + (TEX_NATIVE_W - MSG_NATIVE_RIGHT) * tex_scale).min(bubbles_left);
         let msg_rect = Rect::new(msg_x, input_y, (msg_right - msg_x).max(20.0), input_h);
 
         if self.active {
@@ -1192,13 +1198,16 @@ impl InGameWindow for ChatWindow {
             .state
             .get_or_default::<ChatWindowState>(CHAT_WINDOW_ID)
             .send_channel;
-        if self.draw_bubble(ui, CHANNEL_BTN_ID, channel_bubble, sticky.color()) {
+        // the frameless HUD has no channel or size bubbles: an offline game talks to no one else, and F10
+        // still steps the size
+        let bubbles = !self.frameless;
+        if bubbles && self.draw_bubble(ui, CHANNEL_BTN_ID, channel_bubble, sticky.color()) {
             let st = ui.state.get_or_default::<ChatWindowState>(CHAT_WINDOW_ID);
             st.channel_menu_open = !st.channel_menu_open;
         }
-        if self.draw_bubble(ui, SIZE_BTN_ID, height_bubble, [0.55, 0.55, 0.6, 1.0])
-            || ui.ctx.key_f10
-        {
+        let size_tapped =
+            bubbles && self.draw_bubble(ui, SIZE_BTN_ID, height_bubble, [0.55, 0.55, 0.6, 1.0]);
+        if size_tapped || ui.ctx.key_f10 {
             let st = ui.state.get_or_default::<ChatWindowState>(CHAT_WINDOW_ID);
             let next = st.size_index + 1;
             st.size_index = if next >= SIZE_CYCLE.len() { 1 } else { next };
@@ -1206,12 +1215,15 @@ impl InGameWindow for ChatWindow {
             st.msg_area_h = SIZE_CYCLE[st.size_index];
             st.pos_y -= st.msg_area_h - old_h;
         }
-        self.draw_channel_menu(ui, channel_bubble);
+        if bubbles {
+            self.draw_channel_menu(ui, channel_bubble);
+        }
 
         {
             let input_row = Rect::new(chat_x, input_y, chat_w, input_h);
-            let on_widget = channel_bubble.contains(ui.ctx.mouse_x, ui.ctx.mouse_y)
-                || height_bubble.contains(ui.ctx.mouse_x, ui.ctx.mouse_y)
+            let on_bubble = |r: Rect| bubbles && r.contains(ui.ctx.mouse_x, ui.ctx.mouse_y);
+            let on_widget = on_bubble(channel_bubble)
+                || on_bubble(height_bubble)
                 || (self.active
                     && (whisper_rect.contains(ui.ctx.mouse_x, ui.ctx.mouse_y)
                         || list_rect.contains(ui.ctx.mouse_x, ui.ctx.mouse_y)
