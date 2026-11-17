@@ -756,6 +756,9 @@ impl App {
                 ));
         if touch.attack && advances {
             self.with_ui(|ui| ui.key_enter = true);
+        } else if touch.attack && self.windows.npc_shop.shop.is_open() {
+            // a shop is no place to fight either: the picked item goes to the basket
+            self.windows.npc_shop.press_attack();
         } else if touch.attack {
             self.attack_closest_monster();
         }
@@ -1223,15 +1226,19 @@ impl App {
                     .get(id)
                     .is_some_and(|e| aim_candidate(e, class, map, Some(player_id)))
             };
-            self.game.combat.attack_target_id.filter(|&id| fits(id)).or_else(|| {
-                entities
-                    .iter()
-                    .filter(|e| aim_candidate(e, class, map, Some(player_id)))
-                    .map(|e| (e.id, cell_distance(origin, e.movement.cell_position())))
-                    .filter(|&(_, d)| d <= REACH_CELLS)
-                    .min_by_key(|&(_, d)| d)
-                    .map(|(id, _)| id)
-            })
+            self.game
+                .combat
+                .attack_target_id
+                .filter(|&id| fits(id))
+                .or_else(|| {
+                    entities
+                        .iter()
+                        .filter(|e| aim_candidate(e, class, map, Some(player_id)))
+                        .map(|e| (e.id, cell_distance(origin, e.movement.cell_position())))
+                        .filter(|&(_, d)| d <= REACH_CELLS)
+                        .min_by_key(|&(_, d)| d)
+                        .map(|(id, _)| id)
+                })
         };
         // nothing near: the circle stays up for a tap
         let Some(target) = target else {

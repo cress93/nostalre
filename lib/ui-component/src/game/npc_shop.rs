@@ -188,6 +188,8 @@ pub struct NpcShop {
     tab: Option<Category>,
     /// A finger (or the mouse) held on the grid, until it lifts ([`NpcShop::swipe`])
     swipe: Option<Swipe>,
+    /// The touch screen's Attack was pressed: the picked item goes to the basket ([`NpcShop::press_attack`])
+    attack_pressed: bool,
 }
 
 /// How far a press moves before it is a swipe or a drag, not a tap
@@ -242,6 +244,7 @@ impl NpcShop {
             list_pick: 0,
             tab: None,
             swipe: None,
+            attack_pressed: false,
         }
     }
 
@@ -330,6 +333,23 @@ impl InGameWindow for NpcShop {
         }
 
         let mut events = Vec::new();
+        if std::mem::take(&mut self.attack_pressed) {
+            if let Some((_, dialog)) = self.qty_popup.as_mut() {
+                // a buy's prompt starts empty: Attack straight away is one
+                if dialog.value_str().is_empty() {
+                    dialog.set_input_text("1");
+                }
+                ui.ctx.key_enter = true;
+            } else if let Some(index) = self
+                .shop
+                .selected_index
+                .filter(|i| self.list_indices().contains(i))
+            {
+                self.drop_on_output(index, ctx);
+                // the Enter is not the prompt's answer
+                ui.ctx.key_enter = false;
+            }
+        }
         // the amount popup takes the keys while it is up; the Enter that opened it is not its answer too
         if self.qty_popup.is_none() {
             self.keys(ui, ctx, &mut events);
@@ -1383,6 +1403,13 @@ impl NpcShop {
         self.list_pick = 0;
         self.tab = None;
         self.swipe = None;
+        self.attack_pressed = false;
+    }
+
+    /// The touch screen's Attack while the shop is up: the amount prompt's OK when it asks, else the picked
+    /// item into the basket (asking how many, as a double tap does)
+    pub fn press_attack(&mut self) {
+        self.attack_pressed = true;
     }
 }
 
@@ -1758,6 +1785,35 @@ mod tests {
         assert_eq!(shop_ui.shop.selected_index, None, "and picks nothing");
         frame(&mut shop_ui, y - 2.5 * row, false, false);
         assert_eq!(shop_ui.scroll_offset, 3, "and stays where it was let go");
+    }
+
+    #[test]
+    fn attack_puts_the_picked_item_in_the_basket_one_unless_told() {
+        let mut shop_ui = NpcShop::new();
+        shop_ui.shop.open_buy(100, many_lines(3));
+        let mut state = StateCache::new();
+        let mut character = Character::new();
+        let data = DataTable::new();
+        let mut frame = |shop_ui: &mut NpcShop| {
+            let mut ui_ctx = UiContext::new(1024.0, 768.0);
+            let mut ui = test_frame(&mut ui_ctx, &mut state);
+            shop_ui.build(&mut ui, &mut crate::BuildCtx::test(&mut character, &data));
+        };
+        shop_ui.press_attack();
+        frame(&mut shop_ui);
+        assert!(shop_ui.qty_popup.is_none(), "nothing picked, nothing asked");
+        shop_ui.shop.selected_index = Some(2);
+        shop_ui.press_attack();
+        frame(&mut shop_ui);
+        assert!(
+            shop_ui.qty_popup.is_some(),
+            "how many, as a double tap asks"
+        );
+        shop_ui.press_attack();
+        frame(&mut shop_ui);
+        assert!(shop_ui.qty_popup.is_none());
+        assert_eq!(shop_ui.shop.basket.len(), 1);
+        assert_eq!(shop_ui.shop.basket[0].quantity, 1);
     }
 
     #[test]
