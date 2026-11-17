@@ -19,6 +19,8 @@ pub const QUEST_WINDOW_ID: WidgetId = WidgetId(3700);
 const CLOSE_BTN_ID: WidgetId = WidgetId(3701);
 const VIEW_BTN_ID: WidgetId = WidgetId(3702);
 const FOOTER_CLOSE_BTN_ID: WidgetId = WidgetId(3703);
+/// Turns the picked quest on or off: a touch screen has no right click, the original window's only way
+const ACTIVE_BTN_ID: WidgetId = WidgetId(3707);
 const TAB_BASE_ID: u32 = 3710;
 const ROW_BASE_ID: u32 = 3720;
 const LIST_SCROLL: ScrollbarIds = ScrollbarIds {
@@ -410,6 +412,23 @@ impl InGameWindow for QuestWindow {
                 events.push(GameEvent::OpenQuestDetail { quest_id: id });
             }
         }
+        let picked = self
+            .selected
+            .and_then(|id| quest_log.quests.iter().find(|q| q.id == id))
+            .map(|q| (q.id, q.active));
+        if let Some((id, active)) = picked {
+            let rect = Rect::new(x + 54.0, footer_y + 2.0, 60.0, 20.0);
+            let resp = ui.interact(ACTIVE_BTN_ID, rect);
+            if resp.hovered() {
+                ui.any_interactive_hovered = true;
+            }
+            let pressed = resp.hovered() && ui.ctx.mouse_down;
+            let label = if active { "Turn off" } else { "Turn on" };
+            nostalre_ui::theme::fallback_button(ui, rect, resp.hovered(), pressed, label);
+            if resp.clicked() {
+                self.pending_toggle = Some((id, !active));
+            }
+        }
         let close2_rect = Rect::new(x + WIN_W - 48.0, footer_y + 2.0, 42.0, 20.0);
         if ui
             .button(FOOTER_CLOSE_BTN_ID, close2_rect, &CLOSE_BTN, "Close")
@@ -682,6 +701,46 @@ mod tests {
         build_ctx.quest_log = &log;
         let events = win.build(&mut ui, &mut build_ctx);
 
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                GameEvent::RequestToggleQuestActive {
+                    quest_id: 500,
+                    active: false
+                }
+            )),
+            "expected toggle-active event, got {events:?}"
+        );
+    }
+
+    #[test]
+    fn a_tap_on_the_footer_button_turns_the_picked_quest_off() {
+        let mut log = QuestLog::default();
+        log.replace(vec![Quest {
+            id: 500,
+            active: true,
+            end_time: None,
+            objectives: Vec::new(),
+        }]);
+        let mut win = QuestWindow::new();
+        win.toggle();
+        let mut character = Character::new();
+        let data = DataTable::new();
+        let mut state = StateCache::new();
+        let mut tap = |x: f32, y: f32| {
+            let mut ctx = UiContext::new(800.0, 600.0);
+            ctx.mouse_x = x;
+            ctx.mouse_y = y;
+            ctx.mouse_clicked = true;
+            let mut ui = test_frame(&mut ctx, &mut state);
+            let mut build_ctx = crate::BuildCtx::test(&mut character, &data);
+            build_ctx.quest_log = &log;
+            win.build(&mut ui, &mut build_ctx)
+        };
+        // the row picks the quest, then the footer's button turns it off
+        tap(TAB_STRIP_W + 40.0, DEFAULT_Y + TITLE_H + ROW_H / 2.0);
+        let footer_y = DEFAULT_Y + WIN_H - FOOTER_H;
+        let events = tap(54.0 + 30.0, footer_y + 12.0);
         assert!(
             events.iter().any(|e| matches!(
                 e,
