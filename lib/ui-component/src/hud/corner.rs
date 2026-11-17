@@ -96,7 +96,9 @@ const BOTTOM: f32 = 10.0;
 pub fn wallet(ui: &mut UiFrame, ctx: &BuildCtx) -> bool {
     let inv = &ctx.character.inventory;
     let line = style::line(ui);
-    let right = ui.ctx.screen_width - RIGHT;
+    // a phone's rounded corner would cut into the line
+    let pad = if crate::menu::HANDHELD { 45.0 } else { 0.0 };
+    let right = ui.ctx.screen_width - RIGHT - pad;
     let mut y = ui.ctx.screen_height - BOTTOM - line;
     // a handheld's Back button opens it beside the pad
     let menu_line = if ui.ctx.pad_labels || crate::menu::HANDHELD {
