@@ -243,6 +243,9 @@ pub fn build_in_game_ui(
         }
         storage_moves(windows, ctx.character, &mut menu_events);
         events.extend(menu_events);
+        if windows.menu.take_chat() {
+            windows.chat_window.open_input();
+        }
     }
     events.extend(windows.npc_dialog.build(ui, &mut ctx));
     events.extend(windows.npc_shop.build(ui, &mut ctx));

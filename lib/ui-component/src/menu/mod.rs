@@ -67,10 +67,11 @@ enum Command {
     Settings,
     CharacterSelect,
     ExitGame,
+    Chat,
 }
 
 /// The commands, the system ones after the gap
-const COMMANDS: [Command; 13] = [
+const COMMANDS: [Command; 14] = [
     Command::Items,
     Command::Equipment,
     Command::Skills,
@@ -84,6 +85,7 @@ const COMMANDS: [Command; 13] = [
     Command::Settings,
     Command::CharacterSelect,
     Command::ExitGame,
+    Command::Chat,
 ];
 const FIRST_SYSTEM: usize = 10;
 
@@ -103,6 +105,7 @@ impl Command {
             Self::Settings => "Settings",
             Self::CharacterSelect => "Character Select",
             Self::ExitGame => "Exit Game",
+            Self::Chat => "Chat",
         }
     }
 
@@ -121,6 +124,7 @@ impl Command {
             Self::Settings => "Display, graphics, sound, keys and chat lines.",
             Self::CharacterSelect => "Leave the map for character select.",
             Self::ExitGame => "Close nostalRE.",
+            Self::Chat => "Type a chat line or a GM command.",
         }
     }
 
@@ -205,9 +209,16 @@ pub struct Menu {
     textures: frame::Textures,
     /// A skill or item on its way onto the skill bar
     picker: Option<BarPicker>,
+    /// Chat was picked: the client opens the chat line once the menu is gone (a touch screen has no Enter to)
+    chat_asked: bool,
 }
 
 impl Menu {
+    /// Chat was picked since the last call
+    pub fn take_chat(&mut self) -> bool {
+        std::mem::take(&mut self.chat_asked)
+    }
+
     pub fn is_open(&self) -> bool {
         self.open
     }
@@ -323,6 +334,11 @@ impl Menu {
         self.confirm = None;
         if let Some(screen) = command.screen() {
             self.set_screen(screen);
+            return;
+        }
+        if command == Command::Chat {
+            self.chat_asked = true;
+            self.close();
             return;
         }
         let actions: Vec<HotkeyAction> = match command {
@@ -622,6 +638,19 @@ mod tests {
 
     fn press(code: nostalre_ui::context::PhysicalKeyCode) -> impl FnOnce(&mut UiContext) {
         move |ui| ui.pressed_codes.push(code)
+    }
+
+    #[test]
+    fn chat_closes_the_menu_and_asks_for_the_chat_line_once() {
+        let mut menu = Menu::default();
+        menu.open();
+        let mut character = Character::new();
+        let data = DataTable::new();
+        let ctx = BuildCtx::test(&mut character, &data);
+        menu.pick(Command::Chat, &ctx, &mut Vec::new());
+        assert!(!menu.is_open());
+        assert!(menu.take_chat());
+        assert!(!menu.take_chat());
     }
 
     #[test]

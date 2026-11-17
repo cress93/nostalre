@@ -252,6 +252,12 @@ impl ChatWindow {
         self.whisper_history.truncate(MAX_WHISPER_HISTORY);
     }
 
+    /// The chat line open and focused, as Enter opens it: for a touch screen, which has no Enter
+    pub fn open_input(&mut self) {
+        self.active = true;
+        self.pending_focus = true;
+    }
+
     pub fn start_whisper(&mut self, name: String) {
         self.whisper_target.text = name;
         self.whisper_target.cursor_pos = self.whisper_target.text.chars().count();
