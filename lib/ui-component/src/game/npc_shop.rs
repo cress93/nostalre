@@ -186,6 +186,22 @@ pub struct NpcShop {
     list_pick: usize,
     /// The list's category tab; `None` is All
     tab: Option<Category>,
+    /// A finger (or the mouse) held on the grid, until it lifts ([`NpcShop::swipe`])
+    swipe: Option<Swipe>,
+}
+
+/// How far a press moves before it is a swipe or a drag, not a tap
+const SWIPE_THRESHOLD: f32 = 6.0;
+
+/// A press on the item grid: where it landed, the grid's first row and the pick then, and what it turned out
+/// to be once it moved (`scrolling`: a swipe up or down; `decided` without it: a drag to the basket)
+struct Swipe {
+    x: f32,
+    y: f32,
+    offset: usize,
+    picked: Option<usize>,
+    decided: bool,
+    scrolling: bool,
 }
 
 /// The basket line the keys picked, while a controller is in use
@@ -225,6 +241,7 @@ impl NpcShop {
             basket_pick: 0,
             list_pick: 0,
             tab: None,
+            swipe: None,
         }
     }
 
@@ -484,6 +501,7 @@ impl NpcShop {
                 row_content_w,
                 visible as f32 * row_h,
             );
+            self.swipe(ui, grid, row_h, max_scroll);
             self.draw_grid(ui, events, ctx, grid, &visible_indices, visible, text_color);
         }
         // a barter: one entry a row, with its costs
@@ -592,6 +610,49 @@ impl NpcShop {
         }
 
         win
+    }
+
+    /// A finger moved up or down on the grid scrolls it, a row at a time under the finger; moved sideways it
+    /// drags the item it pressed toward the basket, as before. The press picked the item it landed on and
+    /// started that drag: a swipe calls the drag off and puts the old pick back before the drag shows
+    /// (`UiFrame::draw_drag_icon` starts it at the frame's end)
+    fn swipe(&mut self, ui: &mut UiFrame, grid: Rect, row_h: f32, max_scroll: usize) {
+        let (x, y) = (ui.ctx.mouse_x, ui.ctx.mouse_y);
+        if ui.ctx.mouse_pressed
+            && ui.ctx.mouse_down
+            && grid.contains(x, y)
+            && ui.pointer_available()
+        {
+            self.swipe = Some(Swipe {
+                x,
+                y,
+                offset: self.scroll_offset,
+                picked: self.shop.selected_index,
+                decided: false,
+                scrolling: false,
+            });
+            return;
+        }
+        let Some(swipe) = self.swipe.as_mut() else {
+            return;
+        };
+        if !ui.ctx.mouse_down {
+            self.swipe = None;
+            return;
+        }
+        let (dx, dy) = (x - swipe.x, y - swipe.y);
+        if !swipe.decided && dx.hypot(dy) >= SWIPE_THRESHOLD {
+            swipe.decided = true;
+            swipe.scrolling = dy.abs() > dx.abs();
+            if swipe.scrolling {
+                ui.cancel_drag_source();
+                self.shop.selected_index = swipe.picked;
+            }
+        }
+        if swipe.scrolling {
+            let rows = (-dy / row_h).round() as isize;
+            self.scroll_offset = swipe.offset.saturating_add_signed(rows).min(max_scroll);
+        }
     }
 
     /// All, then a tab for each category the shop has: a tap shows only that kind
@@ -1321,6 +1382,7 @@ impl NpcShop {
         self.basket_pick = 0;
         self.list_pick = 0;
         self.tab = None;
+        self.swipe = None;
     }
 }
 
@@ -1656,6 +1718,46 @@ mod tests {
         // a tab the shop has nothing of shows everything
         shop_ui.tab = Some(Category::Cards);
         assert_eq!(shop_ui.list_indices().len(), 5);
+    }
+
+    fn many_lines(n: u32) -> Vec<ShopBuyItem> {
+        (0..n)
+            .map(|i| buy_line(501 + i, &format!("Item {i:02}")))
+            .collect()
+    }
+
+    #[test]
+    fn a_swipe_up_scrolls_the_grid_and_neither_picks_nor_drags() {
+        let mut shop_ui = NpcShop::new();
+        shop_ui.shop.open_buy(100, many_lines(40));
+        let mut state = StateCache::new();
+        let mut frame = |shop_ui: &mut NpcShop, y: f32, pressed: bool, down: bool| {
+            let mut character = Character::new();
+            let data = DataTable::new();
+            let mut ctx = UiContext::new(1024.0, 768.0);
+            ctx.mouse_x = 150.0;
+            ctx.mouse_y = y;
+            ctx.mouse_pressed = pressed;
+            ctx.mouse_clicked = pressed;
+            ctx.mouse_down = down;
+            let mut ui = test_frame(&mut ctx, &mut state);
+            shop_ui.build(&mut ui, &mut crate::BuildCtx::test(&mut character, &data));
+            ui.draw_drag_icon();
+            ui.is_dragging()
+        };
+        let top = 100.0 + TITLE_H + CONTAINER_PAD_Y + TABS_H;
+        let row = CARD_H + CARD_GAP;
+        let y = top + 4.0 * row;
+        frame(&mut shop_ui, y, true, true);
+        let dragging = frame(&mut shop_ui, y - 2.5 * row, false, true);
+        assert!(!dragging, "a swipe is no drag");
+        assert_eq!(
+            shop_ui.scroll_offset, 3,
+            "the grid follows the finger, a row at a time"
+        );
+        assert_eq!(shop_ui.shop.selected_index, None, "and picks nothing");
+        frame(&mut shop_ui, y - 2.5 * row, false, false);
+        assert_eq!(shop_ui.scroll_offset, 3, "and stays where it was let go");
     }
 
     #[test]

@@ -1282,6 +1282,14 @@ impl<'a> UiFrame<'a> {
         drag.icon_size = icon_size;
     }
 
+    /// Calls off a drag a source started that has not left its threshold yet (or has): a press that turned out
+    /// to be something else, like a swipe through a list
+    pub fn cancel_drag_source(&mut self) {
+        let drag = self.state.get_or_default::<DragState>(DRAG_STATE_ID);
+        drag.pending = false;
+        drag.active = false;
+    }
+
     pub fn is_dragging(&mut self) -> bool {
         self.state.get_or_default::<DragState>(DRAG_STATE_ID).active
     }
