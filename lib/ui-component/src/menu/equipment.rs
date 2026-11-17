@@ -246,15 +246,18 @@ impl Equipment {
         let y = frame::section(ui, x, top + detail_h + 12.0, w, "In your bag");
         let list = Rect::new(x, y, w, area.y + area.h - y);
         let visible = (list.h / ROW_H).floor() as usize;
-        frame::scroll(
+        if let Some(picked) = frame::scroll(
             ui,
             list,
             &mut self.bag_offset,
             self.bag,
             bag.len(),
             visible,
+            ROW_H,
             before != self.bag,
-        );
+        ) {
+            self.bag = picked;
+        }
         if bag.is_empty() {
             style::text(
                 ui,

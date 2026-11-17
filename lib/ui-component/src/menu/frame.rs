@@ -1,6 +1,6 @@
 //! The frame every menu screen shares: the veil over the world, the top line, the commands on the right,
 //! the help line and key hints at the bottom, and the pieces screens build with (tabs, rows, keys).
-use super::{CMD_BASE_ID, CRUMB_ID, HINT_BASE_ID, ROW_BASE_ID, TAB_BASE_ID};
+use super::{CMD_BASE_ID, CRUMB_ID, HINT_BASE_ID, PULL_ID, ROW_BASE_ID, TAB_BASE_ID};
 use crate::hud::style;
 use nostalre_ui::context::PhysicalKeyCode as KeyCode;
 use nostalre_ui::draw::{self, DrawCall, TextureRef};
@@ -430,6 +430,65 @@ pub(super) fn wheel_step(ui: &mut UiFrame, area: Rect) -> isize {
     }
 }
 
+/// How far a finger moves before its press counts as pulling the list rather than a tap
+const PULL_THRESHOLD: f32 = 8.0;
+
+/// A finger (or the mouse) held down on a list: where it landed, the list's first row and the pick then, and
+/// whether it has moved far enough to be pulling the list
+struct Pull {
+    x: f32,
+    y: f32,
+    offset: usize,
+    picked: usize,
+    pulling: bool,
+}
+
+/// A touch screen has no wheel: a finger held on the list in `area` and moved up or down drags the rows along,
+/// `row_h` apart. The press that started it already picked the row it landed on, so on the frame it turns into
+/// a pull this returns the pick from before, to put back. The gesture belongs to the area it landed in, so a
+/// screen with two scrolled areas (a list and a description) moves only the one under the finger. A list that
+/// fits (`max` 0) is never pulled: a finger sliding over it stays a tap, its pick kept
+fn pull(
+    ui: &mut UiFrame,
+    area: Rect,
+    offset: &mut usize,
+    max: usize,
+    row_h: f32,
+    picked: usize,
+) -> Option<usize> {
+    let (x, y) = (ui.ctx.mouse_x, ui.ctx.mouse_y);
+    let (pressed, down) = (ui.ctx.mouse_pressed, ui.ctx.mouse_down);
+    if pressed && down && area.contains(x, y) && ui.pointer_available() {
+        let start = Pull {
+            x,
+            y,
+            offset: *offset,
+            picked,
+            pulling: false,
+        };
+        ui.state.set(PULL_ID, Some(start));
+        return None;
+    }
+    let state = ui.state.get_or_default::<Option<Pull>>(PULL_ID);
+    let pull = state.as_mut().filter(|p| area.contains(p.x, p.y))?;
+    // lifted, a new press somewhere else, or nothing to scroll: this gesture is over
+    if !down || pressed || row_h <= 0.0 || max == 0 {
+        *state = None;
+        return None;
+    }
+    let dy = pull.y - y;
+    let mut put_back = None;
+    if !pull.pulling && dy.abs() >= PULL_THRESHOLD {
+        pull.pulling = true;
+        put_back = Some(pull.picked);
+    }
+    if pull.pulling {
+        let rows = (dy / row_h).round() as isize;
+        *offset = (pull.offset as isize + rows).max(0) as usize;
+    }
+    put_back
+}
+
 /// A block of wrapped text the wheel scrolls; wrapped once per text (`key`) and width, not every frame
 #[derive(Default)]
 pub(super) struct ScrolledText {
@@ -451,6 +510,7 @@ impl ScrolledText {
         let line = style::line(ui);
         let visible = (area.h / line).floor().max(0.0) as usize;
         let max = self.rows.len().saturating_sub(visible);
+        pull(ui, area, &mut self.offset, max, line, 0);
         let moved = self.offset as isize + wheel_step(ui, area);
         self.offset = (moved.max(0) as usize).min(max);
         let more = self.offset < max;
@@ -466,8 +526,10 @@ impl ScrolledText {
     }
 }
 
-/// The first row a list of `len` shows, `visible` at a time: the wheel over `area` moves it, and after a key
-/// moved `picked` (`follow`) it keeps that row in sight
+/// The first row a list of `len` shows, `visible` at a time and `row_h` apart: the wheel or a finger pulling
+/// (see [`pull`]) over `area` moves it, and after a key moved `picked` (`follow`) it keeps that row in sight.
+/// Returns the pick to put back when a press on a row turns out to be a pull
+#[allow(clippy::too_many_arguments)]
 pub(super) fn scroll(
     ui: &mut UiFrame,
     area: Rect,
@@ -475,9 +537,11 @@ pub(super) fn scroll(
     picked: usize,
     len: usize,
     visible: usize,
+    row_h: f32,
     follow: bool,
-) {
+) -> Option<usize> {
     let max = len.saturating_sub(visible);
+    let put_back = pull(ui, area, offset, max, row_h, picked);
     *offset = (*offset as isize + wheel_step(ui, area)).max(0) as usize;
     if follow && picked < *offset {
         *offset = picked;
@@ -485,6 +549,7 @@ pub(super) fn scroll(
         *offset = picked + 1 - visible;
     }
     *offset = (*offset).min(max);
+    put_back
 }
 
 /// The picked index after the up and down keys, wrapping
@@ -526,4 +591,102 @@ impl Textures {
 pub(super) fn section(ui: &mut UiFrame, x: f32, top: f32, w: f32, heading: &str) -> f32 {
     style::heading_rule(ui, x, top, w, heading);
     top + style::line(ui) + 8.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ROW_H, scroll};
+    use nostalre_ui::context::UiContext;
+    use nostalre_ui::rect::Rect;
+    use nostalre_ui::state::StateCache;
+    use nostalre_ui::test_support::test_frame;
+
+    const AREA: Rect = Rect {
+        x: 0.0,
+        y: 0.0,
+        w: 200.0,
+        h: ROW_H * 5.0,
+    };
+
+    /// One frame of a 20-row list showing 5 with the pointer at `y`: `pressed` this frame, `down` held
+    fn frame(
+        state: &mut StateCache,
+        offset: &mut usize,
+        y: f32,
+        pressed: bool,
+        down: bool,
+    ) -> Option<usize> {
+        frame_of(state, offset, 20, y, pressed, down)
+    }
+
+    /// The same for a list of `len` rows
+    fn frame_of(
+        state: &mut StateCache,
+        offset: &mut usize,
+        len: usize,
+        y: f32,
+        pressed: bool,
+        down: bool,
+    ) -> Option<usize> {
+        let mut ctx = UiContext::new(800.0, 600.0);
+        ctx.mouse_x = 50.0;
+        ctx.mouse_y = y;
+        ctx.mouse_pressed = pressed;
+        ctx.mouse_clicked = pressed;
+        ctx.mouse_down = down;
+        let mut ui = test_frame(&mut ctx, state);
+        scroll(&mut ui, AREA, offset, 3, len, 5, ROW_H, false)
+    }
+
+    #[test]
+    fn a_finger_pulls_the_list_row_by_row_and_puts_the_pick_back() {
+        let mut state = StateCache::new();
+        let mut offset = 2;
+        assert_eq!(frame(&mut state, &mut offset, 150.0, true, true), None);
+        // under the threshold it is still a tap
+        assert_eq!(frame(&mut state, &mut offset, 146.0, false, true), None);
+        assert_eq!(offset, 2);
+        // pulled up two rows: the list moves down two, and the pick from before the press comes back once
+        assert_eq!(
+            frame(&mut state, &mut offset, 150.0 - 2.0 * ROW_H, false, true),
+            Some(3)
+        );
+        assert_eq!(offset, 4);
+        assert_eq!(
+            frame(&mut state, &mut offset, 150.0 - 3.0 * ROW_H, false, true),
+            None
+        );
+        assert_eq!(offset, 5);
+        // past the end it stops at the last page
+        frame(&mut state, &mut offset, 150.0 - 40.0 * ROW_H, false, true);
+        assert_eq!(offset, 15);
+        // lifted: the list stays where it was left
+        frame(&mut state, &mut offset, 20.0, false, false);
+        frame(&mut state, &mut offset, 150.0, false, false);
+        assert_eq!(offset, 15);
+    }
+
+    #[test]
+    fn a_press_outside_the_list_does_not_pull_it() {
+        let mut state = StateCache::new();
+        let mut offset = 0;
+        frame(&mut state, &mut offset, 400.0, true, true);
+        frame(&mut state, &mut offset, 50.0, false, true);
+        assert_eq!(offset, 0);
+    }
+
+    #[test]
+    fn a_list_that_fits_is_not_pulled_and_keeps_the_tapped_pick() {
+        let mut state = StateCache::new();
+        let mut offset = 0;
+        assert_eq!(
+            frame_of(&mut state, &mut offset, 4, 150.0, true, true),
+            None
+        );
+        assert_eq!(
+            frame_of(&mut state, &mut offset, 4, 150.0 - 3.0 * ROW_H, false, true),
+            None
+        );
+        assert_eq!(offset, 0);
+    }
 }

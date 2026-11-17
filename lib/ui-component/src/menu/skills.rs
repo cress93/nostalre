@@ -289,7 +289,17 @@ impl Skills {
         let visible = ((tree.h + row_pitch - NODE_H) / row_pitch).floor() as usize;
         if let Some(row) = self.nodes().get(self.picked).map(|n| n.row) {
             let follow = before != self.picked;
-            frame::scroll(ui, tree, &mut self.offset, row, rows, visible, follow);
+            // what scroll hands back is a row, not a node: a node pressed at the start of a pull stays picked
+            let _ = frame::scroll(
+                ui,
+                tree,
+                &mut self.offset,
+                row,
+                rows,
+                visible,
+                row_pitch,
+                follow,
+            );
         }
         let place = |n: &Node| {
             (n.row >= self.offset && n.row < self.offset + visible).then(|| {

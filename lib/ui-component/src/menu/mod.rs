@@ -27,6 +27,8 @@ const MENU_BG_ID: WidgetId = WidgetId(6301);
 const CRUMB_ID: WidgetId = WidgetId(6302);
 /// The skill-bar picker and the drop question, a window over the screen so the screen under it takes no taps
 const MODAL_ID: WidgetId = WidgetId(6303);
+/// Where a finger pulling a list landed (state only, nothing drawn)
+const PULL_ID: WidgetId = WidgetId(6304);
 /// The commands, 6310 to 6329
 const CMD_BASE_ID: u32 = 6310;
 /// The footer's hints, 6330 to 6339

@@ -202,15 +202,18 @@ impl Items {
         );
         let visible = (list.h / ROW_H).floor() as usize;
         let follow = before != self.picked;
-        frame::scroll(
+        if let Some(picked) = frame::scroll(
             ui,
             list,
             &mut self.offset,
             self.picked,
             shown.len(),
             visible,
+            ROW_H,
             follow,
-        );
+        ) {
+            self.picked = picked;
+        }
 
         let mut use_index = keys.enter.then_some(self.picked);
         let rows = shown.iter().enumerate().skip(self.offset).take(visible);
