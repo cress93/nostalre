@@ -32,7 +32,7 @@ use nostalre_game::app_state::AppState;
 use nostalre_game::cursor::PendingSkillTarget;
 use nostalre_game::entity::{EntityState, EntityType};
 use nostalre_game::entity_collection::TALK_RANGE;
-use nostalre_game::hotkey::{PAD_SET_SLOTS, PAD_SETS};
+use nostalre_game::hotkey::{HotkeySlotContent, PAD_SET_SLOTS, PAD_SETS};
 use nostalre_game::keybinding::HotkeyAction;
 use nostalre_game::pad::{PadButton, PadButtons, WHEEL_SLOTS, wheel_slot};
 use nostalre_game::targeting::{TargetClass, revives_corpse, skill_target_class};
@@ -767,7 +767,9 @@ impl App {
         }
         if let Some(i) = touch.slot {
             let slot = self.windows.hud.input.touch_slots.slot(i);
-            self.use_hotbar_slot(slot);
+            if !self.cast_armed_at_nearest(slot) {
+                self.use_hotbar_slot(slot);
+            }
         }
         if touch.next_set {
             self.gamepad.set = (self.gamepad.set + 1) % PAD_SETS;
@@ -1174,6 +1176,90 @@ impl App {
                 id,
                 self.active_packetver,
             ));
+        true
+    }
+
+    /// A touch screen's second press of a skill whose circle is up: no finger has to find a target, the skill goes
+    /// to the nearest one (the monster being fought first, a buff to the caster, a ground skill under the enemy)
+    /// and the circle comes back for the next press. False when `slot` is not the armed skill: the press is a
+    /// first one, as ever
+    fn cast_armed_at_nearest(&mut self, slot: usize) -> bool {
+        let Some(pending) = self.game.pending_casts.pending_skill_target else {
+            return false;
+        };
+        let armed = match self.game.character.hotkeys.get_slot(slot) {
+            HotkeySlotContent::Skill { skill, .. } => skill == pending.skill(),
+            _ => false,
+        };
+        if !armed {
+            return false;
+        }
+        let skill = pending.skill();
+        if self.hidden_blocks_skill(skill) || self.skill_on_cooldown(skill) {
+            return true;
+        }
+        let class = match pending {
+            PendingSkillTarget::Entity { skill, .. } => self
+                .game
+                .resolve_cast_skill(skill)
+                .map(|(target_type, _)| skill_target_class(target_type))
+                .unwrap_or(TargetClass::Offensive),
+            PendingSkillTarget::Ground { .. } => TargetClass::Offensive,
+            // a trap is picked by hand
+            PendingSkillTarget::SkillUnit { .. } => return false,
+        };
+        let entities = &self.game.world.entities;
+        let Some(player) = entities.player() else {
+            return true;
+        };
+        let player_id = player.id;
+        let target = if class == TargetClass::Supportive {
+            (!revives_corpse(skill)).then_some(player_id)
+        } else {
+            let origin = player.movement.cell_position();
+            let map = &self.game.session.map_properties;
+            let fits = |id: u32| {
+                entities
+                    .get(id)
+                    .is_some_and(|e| aim_candidate(e, class, map, Some(player_id)))
+            };
+            self.game.combat.attack_target_id.filter(|&id| fits(id)).or_else(|| {
+                entities
+                    .iter()
+                    .filter(|e| aim_candidate(e, class, map, Some(player_id)))
+                    .map(|e| (e.id, cell_distance(origin, e.movement.cell_position())))
+                    .filter(|&(_, d)| d <= REACH_CELLS)
+                    .min_by_key(|&(_, d)| d)
+                    .map(|(id, _)| id)
+            })
+        };
+        // nothing near: the circle stays up for a tap
+        let Some(target) = target else {
+            return true;
+        };
+        let cast = match pending {
+            PendingSkillTarget::Entity { skill, level } => {
+                self.cast_skill_on_unit(skill, level, target)
+            }
+            PendingSkillTarget::Ground { skill, level } => {
+                let cell = self
+                    .game
+                    .world
+                    .entities
+                    .get(target)
+                    .map(|e| e.movement.cell_position());
+                if let Some((x, y)) = cell {
+                    self.cast_skill_on_cell(skill, level, x as i16, y as i16);
+                }
+                cell.is_some()
+            }
+            PendingSkillTarget::SkillUnit { .. } => false,
+        };
+        if cast {
+            self.game.combat.attack_target_id = None;
+        }
+        // armed again for the next press
+        self.game.pending_casts.pending_skill_target = Some(pending);
         true
     }
 
