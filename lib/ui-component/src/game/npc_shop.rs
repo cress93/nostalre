@@ -7,13 +7,17 @@ use crate::helper::window_chrome::{
     FOOTER_TEX, ITEMWIN_MID_TEX, SYS_BASE_OFF_TEX, SYS_BASE_ON_TEX, TITLEBAR_TEX, draw_container,
     draw_footer, draw_titlebar, text_color,
 };
+use crate::hud::style;
 use crate::{BuildCtx, InGameWindow, Window};
 use nostalre_game::data_table::DataTable;
 use nostalre_game::event::GameEvent;
+use nostalre_game::item::{Item, ItemType};
 use nostalre_game::npc_shop::{NpcShopData, NpcShopMode, ShopKind};
 use nostalre_ui::context::PhysicalKeyCode as KeyCode;
 use nostalre_ui::draw::{self, DrawCall, TextureRef};
-use nostalre_ui::frame::{ButtonTextures, RESIZE_HANDLE_TEX, UiFrame, WidgetId, WindowOrder};
+use nostalre_ui::frame::{
+    ButtonTextures, RESIZE_HANDLE_TEX, Response, UiFrame, WidgetId, WindowOrder,
+};
 use nostalre_ui::rect::Rect;
 
 pub const INPUT_WIN_ID: WidgetId = WidgetId(701);
@@ -51,6 +55,17 @@ const ICON_SIZE: f32 = 24.0;
 const ICON_OFFSET_X: f32 = 4.0;
 const ICON_OFFSET_Y: f32 = 2.0;
 
+/// The item list (all but a barter's) is a grid of cards, three a row, under a strip of category tabs: a long
+/// list of one item a line is a lot of scrolling on a phone
+const GRID_COLS: usize = 3;
+const GRID_WIN_W: f32 = 430.0;
+const CARD_H: f32 = 40.0;
+const CARD_GAP: f32 = 4.0;
+const TABS_H: f32 = 20.0;
+const TAB_GAP: f32 = 14.0;
+/// The category tabs, 760 to 767 (the cards are 720 to 746)
+const TAB_BASE_ID: u32 = 760;
+
 const BUY_BTN: ButtonTextures = ButtonTextures {
     normal: nostalre_resources::ui::BTN_BUY,
     hover: nostalre_resources::ui::BTN_BUY_A,
@@ -86,10 +101,62 @@ const BARTER_BASKET_COSTS: usize = 2;
 
 /// Size and rows of the two windows for the open shop's kind
 struct ListLayout {
+    /// The basket's width, and its lines' height
     win_w: f32,
     row_h: f32,
+    /// The item list's width, its rows' height, the items a row and the tabs over them
+    list_w: f32,
+    list_row_h: f32,
+    cols: usize,
+    tabs_h: f32,
     input_rows: usize,
     output_rows: usize,
+}
+
+/// What kind of thing an item is, for the list's tabs and its order
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Category {
+    Weapons,
+    Armor,
+    Ammo,
+    Usable,
+    Cards,
+    Etc,
+}
+
+impl Category {
+    const ALL: [Category; 6] = [
+        Category::Weapons,
+        Category::Armor,
+        Category::Ammo,
+        Category::Usable,
+        Category::Cards,
+        Category::Etc,
+    ];
+
+    fn of(item: &Item) -> Self {
+        match item.item_type {
+            ItemType::Weapon => Self::Weapons,
+            ItemType::Armor | ItemType::ShadowGear | ItemType::PetArmor => Self::Armor,
+            ItemType::Ammo => Self::Ammo,
+            ItemType::Healing | ItemType::Usable | ItemType::DelayConsume | ItemType::Cash => {
+                Self::Usable
+            }
+            ItemType::Card => Self::Cards,
+            _ => Self::Etc,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Weapons => "Weapons",
+            Self::Armor => "Armor",
+            Self::Ammo => "Ammo",
+            Self::Usable => "Usable",
+            Self::Cards => "Cards",
+            Self::Etc => "Etc",
+        }
+    }
 }
 const NOQUESTION_ITEMCOUNT_FALLBACK: &str = "Toggle Item Amount.";
 
@@ -117,6 +184,8 @@ pub struct NpcShop {
     basket_pick: usize,
     /// Where the picked line stands in the list, for when it leaves ([`NpcShop::keep_list_pick`])
     list_pick: usize,
+    /// The list's category tab; `None` is All
+    tab: Option<Category>,
 }
 
 /// The basket line the keys picked, while a controller is in use
@@ -155,6 +224,7 @@ impl NpcShop {
             focus: Focus::List,
             basket_pick: 0,
             list_pick: 0,
+            tab: None,
         }
     }
 
@@ -256,7 +326,7 @@ impl InGameWindow for NpcShop {
 
         let input_default_x = 100.0;
         let input_default_y = 100.0;
-        let output_default_x = input_default_x + self.layout().win_w + WIN_GAP;
+        let output_default_x = input_default_x + self.layout().list_w + WIN_GAP;
 
         let (input_win_h, output_win_h) = self.window_heights();
 
@@ -306,6 +376,10 @@ impl NpcShop {
             return ListLayout {
                 win_w: BARTER_WIN_W,
                 row_h: 2.0 * ITEM_ROW_H,
+                list_w: BARTER_WIN_W,
+                list_row_h: 2.0 * ITEM_ROW_H,
+                cols: 1,
+                tabs_h: 0.0,
                 input_rows: BARTER_ROWS,
                 output_rows: BARTER_ROWS,
             };
@@ -313,6 +387,10 @@ impl NpcShop {
         ListLayout {
             win_w: WIN_W,
             row_h: ITEM_ROW_H,
+            list_w: GRID_WIN_W,
+            list_row_h: CARD_H + CARD_GAP,
+            cols: GRID_COLS,
+            tabs_h: TABS_H,
             input_rows: self.input_visible_rows.max(INPUT_MIN_ROWS),
             output_rows: OUTPUT_VISIBLE_ROWS
                 .max(self.shop.basket.len().min(5))
@@ -322,10 +400,13 @@ impl NpcShop {
 
     fn window_heights(&self) -> (f32, f32) {
         let layout = self.layout();
-        let height = |rows: usize| {
-            TITLE_H + CONTAINER_PAD_Y + rows as f32 * layout.row_h + CONTAINER_PAD_Y + FOOTER_H
+        let height = |rows: usize, row_h: f32| {
+            TITLE_H + CONTAINER_PAD_Y + rows as f32 * row_h + CONTAINER_PAD_Y + FOOTER_H
         };
-        (height(layout.input_rows), height(layout.output_rows))
+        (
+            height(layout.input_rows, layout.list_row_h) + layout.tabs_h,
+            height(layout.output_rows, layout.row_h),
+        )
     }
 
     /// The input (item list) and output (basket) windows with their current
@@ -335,8 +416,11 @@ impl NpcShop {
             return Vec::new();
         }
         let (input_h, output_h) = self.window_heights();
-        let w = self.layout().win_w;
-        vec![(INPUT_WIN_ID, (w, input_h)), (OUTPUT_WIN_ID, (w, output_h))]
+        let layout = self.layout();
+        vec![
+            (INPUT_WIN_ID, (layout.list_w, input_h)),
+            (OUTPUT_WIN_ID, (layout.win_w, output_h)),
+        ]
     }
 
     fn build_input_window(
@@ -350,17 +434,18 @@ impl NpcShop {
     ) -> Rect {
         let layout = self.layout();
         let barter = self.shop.is_barter();
-        let win_w = layout.win_w;
+        let win_w = layout.list_w;
         let title_h = TITLE_H;
         let footer_h = FOOTER_H;
-        let row_h = layout.row_h;
+        let row_h = layout.list_row_h;
         let pad_left = CONTAINER_PAD_LEFT;
         let pad_right = CONTAINER_PAD_RIGHT;
         let pad_y = CONTAINER_PAD_Y;
         let scrollbar_w = SCROLLBAR_W;
 
         let visible_indices = self.list_indices();
-        let item_count = visible_indices.len();
+        // rows of `cols` items (a barter's one a row)
+        let item_count = visible_indices.len().div_ceil(layout.cols);
         let visible = layout.input_rows;
 
         ui.ensure_in_z_order_with(INPUT_WIN_ID, WindowOrder::Foreground);
@@ -383,23 +468,31 @@ impl NpcShop {
         draw_container(ui, win.x, container_y, win_w, container_h, grf);
 
         let max_scroll = item_count.saturating_sub(visible);
+        // a tab with fewer items than the last one showed
+        self.scroll_offset = self.scroll_offset.min(max_scroll);
 
-        let list_y = container_y + pad_y;
-        let icon_size = ICON_SIZE;
-        let name_x = win.x + pad_left + (ICON_OFFSET_X) + icon_size + (4.0);
+        if !barter {
+            self.draw_tabs(ui, win.x + pad_left, container_y + pad_y, text_color);
+        }
+        let list_y = container_y + pad_y + layout.tabs_h;
         let row_content_w = win_w - pad_left - pad_right - scrollbar_w;
 
-        let icon_x = win.x + pad_left + ICON_OFFSET_X;
-        for i in 0..visible {
+        if !barter {
+            let grid = Rect::new(
+                win.x + pad_left,
+                list_y,
+                row_content_w,
+                visible as f32 * row_h,
+            );
+            self.draw_grid(ui, events, ctx, grid, &visible_indices, visible, text_color);
+        }
+        // a barter: one entry a row, with its costs
+        let barter_rows = if barter { visible } else { 0 };
+        for i in 0..barter_rows {
             let ry = list_y + i as f32 * row_h;
             let Some(&item_idx) = visible_indices.get(self.scroll_offset + i) else {
                 if grf {
-                    let x = if barter {
-                        win.x + BARTER_ICON_X
-                    } else {
-                        icon_x
-                    };
-                    draw_slot(ui, x, ry + ICON_OFFSET_Y);
+                    draw_slot(ui, win.x + BARTER_ICON_X, ry + ICON_OFFSET_Y);
                 }
                 continue;
             };
@@ -409,84 +502,19 @@ impl NpcShop {
             let response = ui.interact(widget_id, row_rect);
             let is_selected = self.shop.selected_index == Some(item_idx);
 
-            if barter {
-                let name = self.item_display_name(item_idx, ctx);
-                let entry = BarterEntry {
-                    x: win.x,
-                    y: ry,
-                    w: win_w - scrollbar_w,
-                    index: item_idx,
-                    under_item: self.shop.stock_left(item_idx).map(i64::from),
-                    times: 1,
-                    cost_slots: 0,
-                    selected: is_selected,
-                };
-                draw_barter_entry(ui, ctx.data, &self.shop, &entry, &name, grf, text_color);
-            } else {
-                if grf {
-                    draw_slot(ui, icon_x, ry + ICON_OFFSET_Y);
-                }
-                if let Some(icon_path) = self.shop.item_icon_path(item_idx) {
-                    let identified = self.shop.item_is_identified(item_idx);
-                    draw_item_icon(ui, icon_path, icon_x, ry + ICON_OFFSET_Y, identified);
-                }
-
-                if is_selected {
-                    let (v, idx) = draw::quad_vertices(
-                        row_rect.x,
-                        row_rect.y,
-                        row_rect.w,
-                        row_rect.h,
-                        [0.20, 0.42, 0.88, 0.50],
-                    );
-                    ui.draw_calls.push(DrawCall {
-                        vertices: v.into(),
-                        indices: idx.into(),
-                        texture: TextureRef::White,
-                    });
-                }
-
-                // Under the icon: what is left to sell, or a market's stock (kRO draws both like a stack's count)
-                let left = match self.shop.mode {
-                    Some(NpcShopMode::Sell) => {
-                        Some(i64::from(self.shop.sell_item_remaining(item_idx)))
-                    }
-                    _ => self.shop.stock_left(item_idx).map(i64::from),
-                };
-                if let Some(left) = left {
-                    draw_count(ui, icon_x, ry + ICON_OFFSET_Y, left, text_color);
-                }
-
-                let name = self.item_display_name(item_idx, ctx);
-                let text_y = ry + row_h - (8.0);
-                ui.text(name_x, text_y, &name, text_color);
-
-                let price_right = win.x + win_w - pad_right - scrollbar_w - (8.0);
-                draw_shop_price(
-                    ui,
-                    price_right,
-                    text_y,
-                    self.shop.item_base_price(item_idx),
-                    self.shop.item_price(item_idx),
-                    text_color,
-                );
-            }
-
-            if response.clicked() {
-                self.shop.selected_index = Some(item_idx);
-                let drag_icon = self.shop.item_icon_path(item_idx);
-                ui.drag_source(INPUT_WIN_ID, item_idx, drag_icon, (icon_size, icon_size));
-            }
-            if response.double_clicked() {
-                self.drop_on_output(item_idx, ctx);
-            }
-            if response.right_clicked()
-                && let Some(item) = self.shop.item_at(item_idx)
-            {
-                events.push(GameEvent::ShowItemInfoDirect {
-                    item: Box::new(item.clone()),
-                });
-            }
+            let name = self.item_display_name(item_idx, ctx);
+            let entry = BarterEntry {
+                x: win.x,
+                y: ry,
+                w: win_w - scrollbar_w,
+                index: item_idx,
+                under_item: self.shop.stock_left(item_idx).map(i64::from),
+                times: 1,
+                cost_slots: 0,
+                selected: is_selected,
+            };
+            draw_barter_entry(ui, ctx.data, &self.shop, &entry, &name, grf, text_color);
+            self.item_pressed(ui, events, ctx, item_idx, &response);
         }
 
         if item_count > visible {
@@ -564,6 +592,148 @@ impl NpcShop {
         }
 
         win
+    }
+
+    /// All, then a tab for each category the shop has: a tap shows only that kind
+    fn draw_tabs(&mut self, ui: &mut UiFrame, x: f32, y: f32, color: [f32; 4]) {
+        let shown = self.shown_tab();
+        let tabs: Vec<Option<Category>> = std::iter::once(None)
+            .chain(self.tabs().into_iter().map(Some))
+            .collect();
+        let dim = [color[0], color[1], color[2], color[3] * 0.55];
+        let mut tx = x + 2.0;
+        let mut picked = None;
+        for (i, tab) in tabs.into_iter().enumerate() {
+            let label = tab.map_or("All", Category::label);
+            let w = ui.atlas.measure_text(label);
+            let rect = Rect::new(tx - TAB_GAP / 2.0, y, w + TAB_GAP, TABS_H);
+            let response = ui.interact(WidgetId(TAB_BASE_ID + i as u32), rect);
+            if response.hovered() {
+                ui.any_interactive_hovered = true;
+            }
+            let on = tab == shown;
+            ui.text(tx, y + TABS_H - 6.0, label, if on { color } else { dim });
+            if on {
+                fill(ui, Rect::new(tx, y + TABS_H - 3.0, w, 2.0), PICK_TINT);
+            }
+            if response.clicked() {
+                picked = Some(tab);
+            }
+            tx += w + TAB_GAP;
+        }
+        if let Some(tab) = picked {
+            self.show_tab(tab);
+        }
+    }
+
+    /// The list's items as cards, `GRID_COLS` a row in `area`, `rows` rows from the scroll offset: icon and count,
+    /// name, price
+    #[allow(clippy::too_many_arguments)]
+    fn draw_grid(
+        &mut self,
+        ui: &mut UiFrame,
+        events: &mut Vec<GameEvent>,
+        ctx: &BuildCtx,
+        area: Rect,
+        lines: &[usize],
+        rows: usize,
+        color: [f32; 4],
+    ) {
+        let grf = self.has_grf_textures;
+        let card_w = ((area.w - (GRID_COLS - 1) as f32 * CARD_GAP) / GRID_COLS as f32).floor();
+        // a card's face: faint on kRO's pale container, faint the other way on the dark fallback
+        let (face, edge) = if grf {
+            ([0.0, 0.0, 0.0, 0.04], [0.0, 0.0, 0.0, 0.16])
+        } else {
+            ([1.0, 1.0, 1.0, 0.05], [1.0, 1.0, 1.0, 0.14])
+        };
+        let first = self.scroll_offset * GRID_COLS;
+        for slot in 0..rows * GRID_COLS {
+            let Some(&item_idx) = lines.get(first + slot) else {
+                break;
+            };
+            let (row, col) = (slot / GRID_COLS, slot % GRID_COLS);
+            let card = Rect::new(
+                area.x + col as f32 * (card_w + CARD_GAP),
+                area.y + row as f32 * (CARD_H + CARD_GAP),
+                card_w,
+                CARD_H,
+            );
+            let response = ui.interact(WidgetId(ITEM_BASE_ID + slot as u32), card);
+            fill(ui, card, face);
+            for edge_rect in [
+                Rect::new(card.x, card.y, card.w, 1.0),
+                Rect::new(card.x, card.y + card.h - 1.0, card.w, 1.0),
+                Rect::new(card.x, card.y, 1.0, card.h),
+                Rect::new(card.x + card.w - 1.0, card.y, 1.0, card.h),
+            ] {
+                fill(ui, edge_rect, edge);
+            }
+            if self.shop.selected_index == Some(item_idx) {
+                fill(ui, card, PICK_TINT);
+            }
+
+            let icon_x = card.x + ICON_OFFSET_X;
+            let icon_y = card.y + 4.0;
+            if grf {
+                draw_slot(ui, icon_x, icon_y);
+            }
+            if let Some(icon_path) = self.shop.item_icon_path(item_idx) {
+                let identified = self.shop.item_is_identified(item_idx);
+                draw_item_icon(ui, icon_path, icon_x, icon_y, identified);
+            }
+            // under the icon: what is left to sell, or a market's stock (kRO draws both like a stack's count)
+            let left = match self.shop.mode {
+                Some(NpcShopMode::Sell) => Some(i64::from(self.shop.sell_item_remaining(item_idx))),
+                _ => self.shop.stock_left(item_idx).map(i64::from),
+            };
+            if let Some(left) = left {
+                draw_count(ui, icon_x, icon_y, left, color);
+            }
+
+            let text_x = icon_x + ICON_SIZE + 5.0;
+            let text_w = card.x + card.w - 4.0 - text_x;
+            let name = self.item_display_name(item_idx, ctx);
+            let name = style::fit(ui, &name, text_w);
+            ui.text(text_x, card.y + 16.0, &name, color);
+            draw_shop_price(
+                ui,
+                card.x + card.w - 5.0,
+                card.y + CARD_H - 6.0,
+                self.shop.item_base_price(item_idx),
+                self.shop.item_price(item_idx),
+                color,
+            );
+
+            self.item_pressed(ui, events, ctx, item_idx, &response);
+        }
+    }
+
+    /// A press on one of the list's items: a click picks it (and starts a drag to the basket), a double click
+    /// moves it across, a right click shows what it is
+    fn item_pressed(
+        &mut self,
+        ui: &mut UiFrame,
+        events: &mut Vec<GameEvent>,
+        ctx: &BuildCtx,
+        item_idx: usize,
+        response: &Response,
+    ) {
+        if response.clicked() {
+            self.shop.selected_index = Some(item_idx);
+            let drag_icon = self.shop.item_icon_path(item_idx);
+            ui.drag_source(INPUT_WIN_ID, item_idx, drag_icon, (ICON_SIZE, ICON_SIZE));
+        }
+        if response.double_clicked() {
+            self.drop_on_output(item_idx, ctx);
+        }
+        if response.right_clicked()
+            && let Some(item) = self.shop.item_at(item_idx)
+        {
+            events.push(GameEvent::ShowItemInfoDirect {
+                item: Box::new(item.clone()),
+            });
+        }
     }
 
     fn build_output_window(
@@ -793,11 +963,55 @@ impl NpcShop {
         win
     }
 
-    /// The list's lines: what is for sale, or what can be sold
-    fn list_indices(&self) -> Vec<usize> {
+    /// Everything the list could show: what is for sale, or what can be sold
+    fn all_indices(&self) -> Vec<usize> {
         match self.shop.mode {
             Some(NpcShopMode::Sell) => self.shop.visible_sell_indices(),
             _ => (0..self.shop.item_count()).collect(),
+        }
+    }
+
+    fn category_of(&self, index: usize) -> Option<Category> {
+        self.shop.item_at(index).map(Category::of)
+    }
+
+    /// The categories the shop has, for its tabs (after All)
+    fn tabs(&self) -> Vec<Category> {
+        let all = self.all_indices();
+        Category::ALL
+            .into_iter()
+            .filter(|&c| all.iter().any(|&i| self.category_of(i) == Some(c)))
+            .collect()
+    }
+
+    /// The tab shown: the picked one while the shop still has such items, else All
+    fn shown_tab(&self) -> Option<Category> {
+        self.tab.filter(|t| self.tabs().contains(t))
+    }
+
+    /// The list's lines: the shown tab's items, by category then name (a barter's as the NPC gave them)
+    fn list_indices(&self) -> Vec<usize> {
+        let all = self.all_indices();
+        if self.shop.is_barter() {
+            return all;
+        }
+        let tab = self.shown_tab();
+        let mut lines: Vec<usize> = all
+            .into_iter()
+            .filter(|&i| tab.is_none() || self.category_of(i) == tab)
+            .collect();
+        lines.sort_by_cached_key(|&i| {
+            let name = self.shop.item_at(i).map(|item| item.name.to_lowercase());
+            (self.category_of(i), name)
+        });
+        lines
+    }
+
+    /// Shows `tab` (`None`: All) from its top
+    fn show_tab(&mut self, tab: Option<Category>) {
+        if self.shown_tab() != tab {
+            self.tab = tab;
+            self.scroll_offset = 0;
         }
     }
 
@@ -813,13 +1027,19 @@ impl NpcShop {
         } else if !lines.is_empty() {
             self.list_pick = self.list_pick.min(lines.len() - 1);
             self.shop.selected_index = Some(lines[self.list_pick]);
-            let rows = self.layout().input_rows;
-            keep_in_view(&mut self.scroll_offset, self.list_pick, rows);
+            let layout = self.layout();
+            keep_in_view(
+                &mut self.scroll_offset,
+                self.list_pick / layout.cols,
+                layout.input_rows,
+            );
         }
     }
 
-    /// The keys, a controller's D-pad and buttons. Up/Down walk the list or the basket, Left/Right go between
-    /// them, Down off the basket's end (or Right from the list with nothing in it) reaches the footer's buttons;
+    /// The keys, a controller's D-pad and buttons. Up/Down walk the list's rows or the basket, Left/Right walk a
+    /// row of the list and go between it and the basket (Right off a row's end), PageUp/PageDown (the shoulders)
+    /// step the list's tabs, Down off the basket's end (or Right from the list with nothing in it) reaches the
+    /// footer's buttons;
     /// Enter (A) moves the picked line across (asking the amount as a drag does) or presses the button. A
     /// controller's Start (Space while one is in use, so a keyboard's stray Space buys nothing) buys or sells
     /// from anywhere
@@ -834,8 +1054,32 @@ impl NpcShop {
             self.focus = Focus::List;
         }
         let layout = self.layout();
+        let cols = layout.cols;
+        if !self.shop.is_barter() {
+            let tab_step = isize::from(c.pressed_codes.contains(&KeyCode::PageDown))
+                - isize::from(c.pressed_codes.contains(&KeyCode::PageUp));
+            if tab_step != 0 {
+                let tabs: Vec<Option<Category>> = std::iter::once(None)
+                    .chain(self.tabs().into_iter().map(Some))
+                    .collect();
+                let at = tabs
+                    .iter()
+                    .position(|&t| t == self.shown_tab())
+                    .unwrap_or(0);
+                let next = (at as isize + tab_step).rem_euclid(tabs.len() as isize) as usize;
+                self.show_tab(tabs[next]);
+                self.shop.selected_index = None;
+            }
+        }
+        let lines = self.list_indices();
+        let list_at = self
+            .shop
+            .selected_index
+            .and_then(|index| lines.iter().position(|&l| l == index));
+        // Right walks a row of the list before it leaves for the basket
+        let right_in_row = list_at.is_some_and(|at| at % cols + 1 < cols && at + 1 < lines.len());
         match self.focus {
-            Focus::List if c.key_right => {
+            Focus::List if c.key_right && !right_in_row => {
                 self.focus = if basket_len > 0 {
                     Focus::Basket
                 } else {
@@ -843,22 +1087,21 @@ impl NpcShop {
                 };
             }
             Focus::List => {
-                let lines = self.list_indices();
-                let at = self
-                    .shop
-                    .selected_index
-                    .and_then(|index| lines.iter().position(|&l| l == index));
+                // a row is `cols` items: Up/Down move a row, Left/Right an item within it
+                let across = isize::from(c.key_right)
+                    - isize::from(c.key_left && list_at.is_some_and(|at| at % cols > 0));
+                let moved = step * cols as isize + across;
                 // the first key on a list nothing is picked in picks its first line
-                let at = match at {
+                let at = match list_at {
                     Some(at) => at
-                        .saturating_add_signed(step)
+                        .saturating_add_signed(moved)
                         .min(lines.len().saturating_sub(1)),
-                    None if !lines.is_empty() && (step != 0 || c.key_enter) => 0,
+                    None if !lines.is_empty() && (moved != 0 || c.key_enter) => 0,
                     None => usize::MAX,
                 };
                 if let Some(&index) = lines.get(at) {
                     self.shop.selected_index = Some(index);
-                    keep_in_view(&mut self.scroll_offset, at, layout.input_rows);
+                    keep_in_view(&mut self.scroll_offset, at / cols, layout.input_rows);
                     if c.key_enter {
                         self.drop_on_output(index, ctx);
                     }
@@ -1077,6 +1320,7 @@ impl NpcShop {
         self.focus = Focus::List;
         self.basket_pick = 0;
         self.list_pick = 0;
+        self.tab = None;
     }
 }
 
@@ -1088,6 +1332,16 @@ fn keep_in_view(offset: &mut usize, at: usize, rows: usize) {
     } else if at >= *offset + rows {
         *offset = at + 1 - rows;
     }
+}
+
+/// A plain rectangle in `color`
+fn fill(ui: &mut UiFrame, r: Rect, color: [f32; 4]) {
+    let (v, idx) = draw::quad_vertices(r.x, r.y, r.w, r.h, color);
+    ui.draw_calls.push(DrawCall {
+        vertices: v.into(),
+        indices: idx.into(),
+        texture: TextureRef::White,
+    });
 }
 
 fn draw_slot(ui: &mut UiFrame, x: f32, y: f32) {
@@ -1319,7 +1573,7 @@ mod tests {
         let mut shop_ui = NpcShop::new();
         shop_ui.shop.open_buy(
             100,
-            vec![buy_line(501, "Red Potion"), buy_line(502, "Orange Potion")],
+            vec![buy_line(501, "Orange Potion"), buy_line(502, "Red Potion")],
         );
         let mut state = StateCache::new();
         let mut character = Character::new();
@@ -1332,11 +1586,11 @@ mod tests {
         };
 
         frame(&mut shop_ui, |c| c.key_down = true);
-        frame(&mut shop_ui, |c| c.key_down = true);
+        frame(&mut shop_ui, |c| c.key_right = true);
         assert_eq!(
             shop_ui.shop.selected_index,
             Some(1),
-            "the first key picks the first line, the next walks on"
+            "the first key picks the first item, Right walks the row"
         );
         frame(&mut shop_ui, |c| c.key_enter = true);
         assert!(
@@ -1367,6 +1621,84 @@ mod tests {
         );
     }
 
+    fn typed_line(item_id: u32, name: &str, item_type: ItemType) -> ShopBuyItem {
+        let mut line = buy_line(item_id, name);
+        line.item.item_type = item_type;
+        line
+    }
+
+    #[test]
+    fn the_list_goes_by_category_then_name_and_a_tab_shows_one_kind() {
+        let mut shop_ui = NpcShop::new();
+        shop_ui.shop.open_buy(
+            100,
+            vec![
+                typed_line(501, "Red Potion", ItemType::Healing),
+                typed_line(1201, "Knife", ItemType::Weapon),
+                typed_line(2301, "Cotton Shirt", ItemType::Armor),
+                typed_line(1101, "Sword", ItemType::Weapon),
+                typed_line(909, "Jellopy", ItemType::Etc),
+            ],
+        );
+        // weapons by name, then armor, usable, etc
+        assert_eq!(shop_ui.list_indices(), vec![1, 3, 2, 0, 4]);
+        assert_eq!(
+            shop_ui.tabs(),
+            vec![
+                Category::Weapons,
+                Category::Armor,
+                Category::Usable,
+                Category::Etc
+            ]
+        );
+        shop_ui.show_tab(Some(Category::Weapons));
+        assert_eq!(shop_ui.list_indices(), vec![1, 3]);
+        // a tab the shop has nothing of shows everything
+        shop_ui.tab = Some(Category::Cards);
+        assert_eq!(shop_ui.list_indices().len(), 5);
+    }
+
+    #[test]
+    fn up_and_down_move_a_row_of_the_grid() {
+        let mut shop_ui = NpcShop::new();
+        let names = ["A", "B", "C", "D", "E"];
+        shop_ui.shop.open_buy(
+            100,
+            names
+                .iter()
+                .enumerate()
+                .map(|(i, n)| buy_line(501 + i as u32, n))
+                .collect(),
+        );
+        let mut state = StateCache::new();
+        let mut character = Character::new();
+        let data = DataTable::new();
+        let mut frame = |shop_ui: &mut NpcShop, keys: fn(&mut UiContext)| {
+            let mut ui_ctx = UiContext::new(1024.0, 768.0);
+            keys(&mut ui_ctx);
+            let mut ui = test_frame(&mut ui_ctx, &mut state);
+            shop_ui.build(&mut ui, &mut crate::BuildCtx::test(&mut character, &data));
+        };
+        frame(&mut shop_ui, |c| c.key_down = true);
+        frame(&mut shop_ui, |c| c.key_right = true);
+        assert_eq!(shop_ui.shop.selected_index, Some(1));
+        frame(&mut shop_ui, |c| c.key_down = true);
+        assert_eq!(
+            shop_ui.shop.selected_index,
+            Some(4),
+            "B's column, a row down"
+        );
+        frame(&mut shop_ui, |c| c.key_up = true);
+        frame(&mut shop_ui, |c| c.key_left = true);
+        assert_eq!(shop_ui.shop.selected_index, Some(0));
+        frame(&mut shop_ui, |c| c.key_left = true);
+        assert_eq!(
+            shop_ui.shop.selected_index,
+            Some(0),
+            "Left stops at the row's start"
+        );
+    }
+
     #[test]
     fn selling_a_whole_line_keeps_the_pick_where_it_was() {
         let sell_line = |item_id, name| ShopSellItem {
@@ -1378,10 +1710,10 @@ mod tests {
         shop_ui.shop.open_sell(
             100,
             vec![
-                sell_line(501, "Red Potion"),
-                sell_line(502, "Orange Potion"),
-                sell_line(503, "Yellow Potion"),
-                sell_line(504, "White Potion"),
+                sell_line(501, "Apple"),
+                sell_line(502, "Banana"),
+                sell_line(503, "Carrot"),
+                sell_line(504, "Grape"),
             ],
         );
         let mut state = StateCache::new();
@@ -1395,7 +1727,7 @@ mod tests {
         };
 
         frame(&mut shop_ui, |c| c.key_down = true);
-        frame(&mut shop_ui, |c| c.key_down = true);
+        frame(&mut shop_ui, |c| c.key_right = true);
         frame(&mut shop_ui, |c| c.key_enter = true);
         assert_eq!(shop_ui.shop.basket.len(), 1);
         frame(&mut shop_ui, |_| {});
@@ -1404,7 +1736,7 @@ mod tests {
             Some(2),
             "the line after the one sold takes the pick"
         );
-        frame(&mut shop_ui, |c| c.key_down = true);
+        frame(&mut shop_ui, |c| c.key_right = true);
         assert_eq!(shop_ui.shop.selected_index, Some(3), "and the keys walk on");
 
         frame(&mut shop_ui, |c| c.key_enter = true);
@@ -1572,27 +1904,31 @@ mod tests {
         shop_ui.shop.add_to_basket(0, 10);
 
         let mut state = StateCache::new();
-        let frame = |state: &mut StateCache, shop_ui: &mut NpcShop, mx: f32, my: f32, down: bool| {
-            let mut character = Character::new();
-            let data = DataTable::new();
-            let mut ctx = UiContext::new(800.0, 600.0);
-            ctx.mouse_x = mx;
-            ctx.mouse_y = my;
-            ctx.mouse_down = down;
-            let mut ui = test_frame(&mut ctx, state);
-            shop_ui.setup_modal(&mut ui);
-            let z = ui.get_z_order();
-            ui.compute_hovered_window(&z);
-            shop_ui.build(&mut ui, &mut crate::BuildCtx::test(&mut character, &data));
-            ui.draw_drag_icon();
-        };
+        let frame =
+            |state: &mut StateCache, shop_ui: &mut NpcShop, mx: f32, my: f32, down: bool| {
+                let mut character = Character::new();
+                let data = DataTable::new();
+                let mut ctx = UiContext::new(800.0, 600.0);
+                ctx.mouse_x = mx;
+                ctx.mouse_y = my;
+                ctx.mouse_down = down;
+                let mut ui = test_frame(&mut ctx, state);
+                shop_ui.setup_modal(&mut ui);
+                let z = ui.get_z_order();
+                ui.compute_hovered_window(&z);
+                shop_ui.build(&mut ui, &mut crate::BuildCtx::test(&mut character, &data));
+                ui.draw_drag_icon();
+            };
 
         let (input_h, output_h) = shop_ui.window_heights();
         let basket_row = (
-            100.0 + WIN_W + WIN_GAP + CONTAINER_PAD_LEFT + ICON_SIZE,
+            100.0 + GRID_WIN_W + WIN_GAP + CONTAINER_PAD_LEFT + ICON_SIZE,
             100.0 + input_h - output_h + TITLE_H + CONTAINER_PAD_Y + ICON_SIZE / 2.0,
         );
-        let list_row = (150.0, 100.0 + TITLE_H + CONTAINER_PAD_Y + ICON_SIZE / 2.0);
+        let list_row = (
+            150.0,
+            100.0 + TITLE_H + CONTAINER_PAD_Y + TABS_H + ICON_SIZE / 2.0,
+        );
         let mut drag_basket_to_list = |state: &mut StateCache, shop_ui: &mut NpcShop| {
             frame(state, shop_ui, basket_row.0, basket_row.1, false);
             {
@@ -1730,7 +2066,10 @@ mod tests {
         frame(&mut shop_ui, Some(OUTPUT_WIN_ID));
         let z = frame(&mut shop_ui, None);
         let at = |id| z.iter().position(|&w| w == id);
-        assert!(at(OUTPUT_WIN_ID) > at(prompt), "the basket rose over the old prompt: {z:?}");
+        assert!(
+            at(OUTPUT_WIN_ID) > at(prompt),
+            "the basket rose over the old prompt: {z:?}"
+        );
 
         shop_ui.open_qty_popup(QtyTarget::AddToBasket { item_index: 0 }, "Red Potion");
         frame(&mut shop_ui, None);
@@ -1847,11 +2186,16 @@ mod tests {
             "footer must not fall through to the world"
         );
         assert!(
-            frame(&mut state, &mut shop_ui, 400.0, basket_y + 5.0),
+            frame(
+                &mut state,
+                &mut shop_ui,
+                100.0 + GRID_WIN_W + WIN_GAP + 50.0,
+                basket_y + 5.0
+            ),
             "basket window title bar must not fall through to the world"
         );
         assert!(
-            !frame(&mut state, &mut shop_ui, 600.0, 500.0),
+            !frame(&mut state, &mut shop_ui, 50.0, 550.0),
             "the world stays reachable outside the shop"
         );
     }
@@ -1909,7 +2253,10 @@ mod tests {
             ),
             "expected a barter trade, got {events:?}"
         );
-        assert!(frame(buy.0, buy.1, true).is_empty(), "nothing left to trade twice");
+        assert!(
+            frame(buy.0, buy.1, true).is_empty(),
+            "nothing left to trade twice"
+        );
     }
 
     #[test]
@@ -1955,7 +2302,10 @@ mod tests {
             100.0 + BARTER_COST_X + ICON_SIZE / 2.0,
             100.0 + TITLE_H + CONTAINER_PAD_Y + ICON_OFFSET_Y + ITEM_ROW_H + ICON_SIZE / 2.0,
         );
-        assert!(tooltips_at(cost.0, cost.1) > 0, "hovering the cost names it");
+        assert!(
+            tooltips_at(cost.0, cost.1) > 0,
+            "hovering the cost names it"
+        );
         assert_eq!(tooltips_at(cost.0 + 200.0, cost.1), 0);
     }
 
@@ -2023,7 +2373,10 @@ mod tests {
 
         // the buy button, in the basket's footer (the basket's bottom meets the list's)
         let (input_h, output_h) = shop_ui.window_heights();
-        let buy = (587.0, 100.0 + input_h - output_h + 105.0);
+        let buy = (
+            100.0 + GRID_WIN_W + WIN_GAP + 197.0,
+            100.0 + input_h - output_h + 105.0,
+        );
 
         shop_ui.close();
         frame(&mut state, &mut shop_ui, 750.0, 400.0, true);
@@ -2094,7 +2447,7 @@ mod tests {
         let mut state = StateCache::new();
         let mut ctx = UiContext::new(800.0, 600.0);
         ctx.mouse_x = 150.0;
-        ctx.mouse_y = 138.0;
+        ctx.mouse_y = 100.0 + TITLE_H + CONTAINER_PAD_Y + TABS_H + CARD_H / 2.0;
         ctx.mouse_right_clicked = true;
         let mut ui = test_frame(&mut ctx, &mut state);
 
