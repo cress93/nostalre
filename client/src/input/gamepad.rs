@@ -743,7 +743,20 @@ impl App {
         self.windows.hud.input.touch_slots.talk = talk;
         self.windows.hud.input.touch_slots.sit = self.sit_state();
         let touch = self.windows.hud.touch_input();
-        if touch.attack {
+        // while an NPC talks there is no fighting: Attack, the big button, steps the dialog on as Enter does
+        // (Next, Close, and the OK of a choice or an input)
+        use nostalre_game::npc_dialog::NpcDialogState as Npc;
+        let dialog = &self.windows.npc_dialog.dialog;
+        let advances = dialog.is_open()
+            && (dialog.next_button
+                || dialog.close_button
+                || matches!(
+                    dialog.state,
+                    Npc::WaitingForMenu | Npc::WaitingForNumberInput | Npc::WaitingForStringInput
+                ));
+        if touch.attack && advances {
+            self.with_ui(|ui| ui.key_enter = true);
+        } else if touch.attack {
             self.attack_closest_monster();
         }
         if touch.talk {
