@@ -289,6 +289,7 @@ impl App {
             Some(a) => a,
             None => return,
         };
+        self.route_walk_interrupted();
 
         self.channel.send_packet(build_request_move_packet(
             move_action.dest_x,

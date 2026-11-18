@@ -1126,6 +1126,7 @@ impl App {
         }
         self.gamepad.walk = Some((now, turn));
         self.stop_attacking();
+        self.route_walk_interrupted();
         self.walk_to(tx, ty);
     }
 

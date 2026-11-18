@@ -123,6 +123,7 @@ impl App {
             self.game.combat.damage_numbers.view_yaw = renderer.camera.yaw;
         }
         self.process_continuous_walk(delta);
+        self.update_route();
         self.update_entity_state(delta);
         self.flush_queued_move();
         self.update_companion_ai(delta);

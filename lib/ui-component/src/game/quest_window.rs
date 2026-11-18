@@ -31,6 +31,7 @@ const LIST_SCROLL: ScrollbarIds = ScrollbarIds {
 
 pub const QUEST_DETAIL_WINDOW_ID: WidgetId = WidgetId(3750);
 const DETAIL_CLOSE_BTN_ID: WidgetId = WidgetId(3751);
+const DETAIL_NAVIGATE_BTN_ID: WidgetId = WidgetId(3752);
 
 const CLOSE_OFF_TEX: &str = nostalre_resources::ui::basic::SYS_CLOSE_OFF;
 const CLOSE_ON_TEX: &str = nostalre_resources::ui::basic::SYS_CLOSE_ON;
@@ -527,7 +528,9 @@ impl InGameWindow for QuestDetailWindow {
             self.open = false;
             return Vec::new();
         };
-        let events = Vec::new();
+        let mut events = Vec::new();
+        // where it is done, when the quest says (the quest board's do)
+        let place = ctx.character.board.place_of(quest.id);
         let prev_grf = ui.has_grf_textures;
         ui.has_grf_textures = self.has_grf_textures;
         let grf = self.has_grf_textures;
@@ -591,6 +594,24 @@ impl InGameWindow for QuestDetailWindow {
         }
 
         ui.text(x + 120.0, y + 70.0, &quest_title(data, id), TEXT);
+
+        if let Some((map, cell, label)) = place {
+            let r = Rect::new(x + DETAIL_W - 95.0, y + 32.0, 80.0, 20.0);
+            let resp = ui.interact(DETAIL_NAVIGATE_BTN_ID, r);
+            if resp.hovered() {
+                ui.any_interactive_hovered = true;
+            }
+            let bg = if resp.hovered() {
+                [0.3, 0.45, 0.35, 1.0]
+            } else {
+                [0.18, 0.3, 0.22, 1.0]
+            };
+            fill(ui, r.x, r.y, r.w, r.h, bg);
+            ui.text_centered(r.x, r.y + 15.0, r.w, "Navigate", [1.0, 1.0, 1.0, 1.0]);
+            if resp.clicked() {
+                events.push(GameEvent::Navigate { map, cell, label });
+            }
+        }
 
         if let Some(end) = quest.end_time {
             ui.text(x + 120.0, y + 68.0, &format_end_time(end), LABEL_COLOR);

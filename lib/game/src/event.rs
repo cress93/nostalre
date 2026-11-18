@@ -1713,6 +1713,18 @@ pub enum GameEvent {
     RequestWorldMapTexture {
         path: String,
     },
+    /// UI → client: a route to a map (and a cell on it), followed on the HUD (`crate::navigation::Route`)
+    Navigate {
+        map: String,
+        cell: Option<(u16, u16)>,
+        label: String,
+    },
+    /// UI → client: the route followed no more
+    StopNavigation,
+    /// UI → client: walk the route by itself, or stop walking it
+    NavigationAutoWalk {
+        on: bool,
+    },
 
     // --- Skill-triggered production / selection windows ---
     ItemIdentifyList {

@@ -1,5 +1,5 @@
-//! Top right: ping, the round minimap, where you are, the quests you follow.
-use super::HudInput;
+//! Top right: ping, the round minimap, where you are, the route the navigation follows, the quests you follow.
+use super::{HudInput, NavTap};
 use super::style;
 use crate::BuildCtx;
 use crate::helper::format::format_thousands;
@@ -15,9 +15,11 @@ const QUEST_GAP: f32 = 10.0;
 const OBJECTIVE_INDENT: f32 = 16.0;
 const DOT: f32 = 6.0;
 const MENU_BTN_ID: WidgetId = WidgetId(7000);
+const NAV_WALK_ID: WidgetId = WidgetId(7001);
+const NAV_END_ID: WidgetId = WidgetId(7002);
 
-/// Draws the corner and returns the minimap's square
-pub fn build(ui: &mut UiFrame, ctx: &BuildCtx, input: &HudInput) -> Rect {
+/// Draws the corner and returns the minimap's square, and a tap on the navigation's buttons
+pub fn build(ui: &mut UiFrame, ctx: &BuildCtx, input: &HudInput) -> (Rect, Option<NavTap>) {
     let line = style::line(ui);
     let right = ui.ctx.screen_width - RIGHT;
     let mut y = TOP;
@@ -45,9 +47,45 @@ pub fn build(ui: &mut UiFrame, ctx: &BuildCtx, input: &HudInput) -> Rect {
         y += line;
     }
 
+    let mut tap = None;
+    if let Some(nav) = &input.navigation {
+        y += 16.0;
+        let left = right - QUESTS_W;
+        style::heading_rule(ui, left, y, QUESTS_W, "Navigation");
+        y += line + 6.0;
+        let dest = style::fit(ui, &nav.dest, QUESTS_W);
+        style::text_bold(ui, left, style::baseline(ui, y), &dest, style::ACCENT);
+        y += line + 2.0;
+        for row in style::wrap(ui, &nav.step, QUESTS_W).iter().take(2) {
+            style::text(ui, left, style::baseline(ui, y), row, style::DIM);
+            y += line;
+        }
+        // Walk (or Stop) and End, pills a finger can hit
+        y += 4.0;
+        let h = line + 10.0;
+        let walk = if nav.walking { "Stop" } else { "Walk there" };
+        let mut x = left;
+        for (id, label, what) in [
+            (NAV_WALK_ID, walk, NavTap::Walk(!nav.walking)),
+            (NAV_END_ID, "End", NavTap::End),
+        ] {
+            let w = style::measure(ui, label) + 28.0;
+            let r = Rect::new(x, y, w, h);
+            let resp = ui.interact(id, r);
+            style::pill_button(ui, r);
+            let color = if resp.hovered() { style::ACCENT } else { style::TEXT };
+            style::text_centered(ui, r.x + r.w / 2.0, style::baseline(ui, y + 5.0), label, color);
+            if resp.clicked() {
+                tap = Some(what);
+            }
+            x += w + 10.0;
+        }
+        y += h + 4.0;
+    }
+
     let active: Vec<_> = ctx.quest_log.quests.iter().filter(|q| q.active).collect();
     if active.is_empty() {
-        return map;
+        return (map, tap);
     }
     y += 16.0;
     let left = right - QUESTS_W;
@@ -87,7 +125,7 @@ pub fn build(ui: &mut UiFrame, ctx: &BuildCtx, input: &HudInput) -> Rect {
         }
         y += QUEST_GAP;
     }
-    map
+    (map, tap)
 }
 
 const BOTTOM: f32 = 10.0;

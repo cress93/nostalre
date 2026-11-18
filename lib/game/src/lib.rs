@@ -57,6 +57,7 @@ pub mod map_title;
 pub mod questboard;
 pub mod world_view;
 pub mod map_monster_tables;
+pub mod nav_link_tables;
 pub mod map_transition;
 pub mod mail;
 pub mod map_cloud;

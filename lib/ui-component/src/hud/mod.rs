@@ -73,12 +73,33 @@ pub fn place_name<'a>(data: &'a DataTable, map: &'a str) -> &'a str {
         .unwrap_or(map)
 }
 
+/// The route the navigation follows, as the corner shows it
+#[derive(Debug, Clone, PartialEq)]
+pub struct NavReadout {
+    /// Where to ("Payon Field 08")
+    pub dest: String,
+    /// What to head for on this map ("Portal to Payon Field 07 · 40 cells north-east")
+    pub step: String,
+    /// Walking there by itself
+    pub walking: bool,
+}
+
+/// A tap on the corner's navigation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavTap {
+    /// Walk there, or stop walking
+    Walk(bool),
+    End,
+}
+
 /// What the client knows that `BuildCtx` does not carry, set each frame before `build`
 #[derive(Debug, Default)]
 pub struct HudInput {
     /// Round trip to the server, once the clock is synced
     pub ping_ms: Option<u32>,
     pub place: Option<Place>,
+    /// The route followed, when there is one
+    pub navigation: Option<NavReadout>,
     /// Where the chat was drawn last frame, for the shade behind it
     pub chat: Option<Rect>,
     pub player_cast: Option<CastInfo>,
@@ -103,6 +124,8 @@ pub struct HudPlacement {
     pub minimap: Rect,
     /// "Esc  Menu" was tapped
     pub menu_tapped: bool,
+    /// The navigation's Walk or End was tapped
+    pub nav_tap: Option<NavTap>,
 }
 
 #[derive(Debug, Default)]
@@ -158,7 +181,7 @@ impl Hud {
         }
         party::build(ui, ctx, &self.input.attackers);
         let plate = target::build(ui, self.input.target.as_ref(), &mut self.target_trail);
-        let minimap = corner::build(ui, ctx, &self.input);
+        let (minimap, nav_tap) = corner::build(ui, ctx, &self.input);
         let menu_tapped = corner::wallet(ui, ctx);
         let hotkeys = player::build(ui, ctx, &self.input, hotkey_rows, &mut self.hp_trail);
         if let Some(readout) = &self.input.camera {
@@ -180,6 +203,7 @@ impl Hud {
             hotkeys,
             minimap,
             menu_tapped,
+            nav_tap,
         }
     }
 }

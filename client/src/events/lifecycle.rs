@@ -109,7 +109,7 @@ impl App {
                 self.game.minimap_marks.clear();
                 // an "Unequip All" left unanswered greys no other character's button
                 self.windows.equipment_window.unequip_all_answered();
-                self.game.navigation = None;
+                self.stop_route();
                 self.windows.pet_window.set_visible(false);
                 self.game.companions.companion_attack_target = [None; 2];
                 self.game.companions.companion_move_marker = [None; 2];

@@ -12,6 +12,7 @@ mod gm;
 mod guild;
 mod inventory;
 mod lifecycle;
+pub(crate) mod navigation;
 mod login;
 mod mail;
 pub(crate) mod marriage;
@@ -2485,6 +2486,11 @@ impl App {
                 GameEvent::NavigationGuide { navigation } => {
                     self.handle_navigation_guide(navigation)
                 }
+                GameEvent::Navigate { map, cell, label } => {
+                    self.start_route(nostalre_game::navigation::Destination { map, cell, label });
+                }
+                GameEvent::StopNavigation => self.stop_route(),
+                GameEvent::NavigationAutoWalk { on } => self.set_route_auto_walk(on),
                 GameEvent::ShowItemInfoDirect { item } => {
                     let is_book = self.item_is_book(item.item_id);
                     self.windows.item_info_window.show(

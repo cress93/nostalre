@@ -10,7 +10,7 @@ use nostalre_game::event::GameEvent;
 use nostalre_game::guild::Guild;
 use nostalre_game::keybinding::HotkeyAction;
 use nostalre_game::minimap_mark::{CrimsonMarks, MinimapMarks};
-use nostalre_game::navigation::Navigation;
+use nostalre_game::navigation::Goal;
 use nostalre_game::party::Party;
 use nostalre_game::quest::QuestMarker;
 use nostalre_ui::frame::{UiFrame, WidgetId};
@@ -21,7 +21,7 @@ use nostalre_ui_component::game::inventory_window::INV_WINDOW_ID;
 use nostalre_ui_component::game::levelup_notification_window::LevelUpClick;
 use nostalre_ui_component::game::minimap_window::{MarkerType, MinimapMarker, quest_marker_color};
 use nostalre_ui_component::game::refine_window::REFINE_WINDOW_ID;
-use nostalre_ui_component::hud::{CastInfo, Place, TargetInfo, Unit};
+use nostalre_ui_component::hud::{CastInfo, NavReadout, NavTap, Place, TargetInfo, Unit};
 use nostalre_ui_component::{BuildCtx, InGameWindow, Window};
 use std::collections::HashMap;
 
@@ -53,6 +53,7 @@ pub fn build_in_game_ui(
         let clock = &game.session.server_time;
         input.ping_ms = clock.is_synced().then(|| clock.rtt());
         input.place = place(game);
+        input.navigation = nav_readout(game);
         input.chat = windows.chat_window.bounds();
     }
     windows.chat_window.frameless = windows.hud.is_modern();
@@ -153,6 +154,11 @@ pub fn build_in_game_ui(
     });
     windows.hotkey_bar.dock = placement.map(|p| p.hotkeys);
     windows.minimap_window.round = placement.map(|p| p.minimap);
+    match placement.and_then(|p| p.nav_tap) {
+        Some(NavTap::Walk(on)) => events.push(GameEvent::NavigationAutoWalk { on }),
+        Some(NavTap::End) => events.push(GameEvent::StopNavigation),
+        None => {}
+    }
     if placement.is_some_and(|p| p.menu_tapped) {
         windows.menu.open();
         // the tap is the menu line's: the menu drawn this frame does not take it too
@@ -203,14 +209,16 @@ pub fn build_in_game_ui(
     }
     windows.minimap_window.map_name = game.session.current_map.clone();
     game.minimap_marks.prune(ui.elapsed_secs);
-    if let (Some(nav), Some(map), Some(player)) = (
-        &game.navigation,
-        game.session.current_map.as_deref(),
-        game.world.entities.player(),
-    ) && nav.reached(map, player.movement.cell_position())
-    {
-        game.navigation = None;
-    }
+    // what the route heads for on this map
+    let route_goal = game
+        .route
+        .as_ref()
+        .zip(game.session.current_map.as_deref())
+        .and_then(|(route, map)| match route.goal_on(map)? {
+            Goal::Way(step) => Some((step.x, step.y)),
+            Goal::Cell(x, y) => Some((x, y)),
+            Goal::Here => None,
+        });
     windows.minimap_window.entity_markers = collect_minimap_markers(
         ctx.party,
         ctx.guild,
@@ -219,7 +227,7 @@ pub fn build_in_game_ui(
             marks: &game.minimap_marks,
             crimson_marks: &game.crimson_marks,
             boss_mark: game.boss_mark.as_ref(),
-            navigation: game.navigation.as_ref(),
+            route_goal,
         },
         game.session.current_map.as_deref(),
         ctx.local_aid,
@@ -436,17 +444,17 @@ const BOSS_MARK_COLOR: [f32; 3] = [1.0, 0.2, 0.2];
 /// A Crimson Marker's square: kRO's minimap draws it in 0xffff0000 (0x76d3a0)
 const CRIMSON_MARK_COLOR: [f32; 3] = [1.0, 0.0, 0.0];
 
-/// An NPC's navigation guide's cell (0x08e2): ours, kRO draws its guide in a window of its own
+/// What the navigation's route heads for: ours, kRO draws its guide in a window of its own
 const NAVIGATION_MARK_COLOR: [f32; 3] = [0.2, 0.9, 1.0];
 
 /// The marks the server puts on the minimap: quest markers, its mark channel (`ZC_COMPASS` viewpoints), the units
-/// a Crimson Marker marks, the Convex Mirror's MVP and an NPC's navigation guide
+/// a Crimson Marker marks, the Convex Mirror's MVP and the cell the navigation heads for
 struct ServerMarks<'a> {
     quest_markers: &'a HashMap<u32, QuestMarker>,
     marks: &'a MinimapMarks,
     crimson_marks: &'a CrimsonMarks,
     boss_mark: Option<&'a BossMark>,
-    navigation: Option<&'a Navigation>,
+    route_goal: Option<(u16, u16)>,
 }
 
 /// What the minimap marks: party members and same-map guild members, and the server's marks. NPCs and portals are
@@ -463,7 +471,7 @@ fn collect_minimap_markers(
         marks,
         crimson_marks,
         boss_mark,
-        navigation,
+        route_goal,
     } = server;
     let mut markers = Vec::new();
     let current_map = current_map.map(nostalre_game::map_key);
@@ -516,10 +524,7 @@ fn collect_minimap_markers(
             name: None,
         });
     }
-    if let Some((x, y)) = navigation
-        .zip(current_map.as_deref())
-        .and_then(|(nav, map)| nav.cell_on(map))
-    {
+    if let Some((x, y)) = route_goal {
         markers.push(MinimapMarker {
             x: f32::from(x),
             y: f32::from(y),
@@ -901,6 +906,37 @@ fn hud_target(game: &GameState) -> Option<TargetInfo> {
     })
 }
 
+/// The route followed, as the corner shows it: where to, and what to head for on this map
+fn nav_readout(game: &GameState) -> Option<NavReadout> {
+    let route = game.route.as_ref()?;
+    let map = game.session.current_map.as_deref()?;
+    let cell = game.world.entities.player()?.movement.cell_position();
+    let name = |m: &str| nostalre_ui_component::hud::place_name(&game.data_table, m).to_string();
+    let toward = |x: u16, y: u16| {
+        let d = cell.0.abs_diff(x).max(cell.1.abs_diff(y));
+        format!("{d} cells {}", nostalre_game::navigation::compass(cell, (x, y)))
+    };
+    let step = match route.goal_on(map) {
+        Some(Goal::Way(s)) if s.npc.is_empty() => {
+            format!("Portal to {} · {}", name(s.to), toward(s.x, s.y))
+        }
+        Some(Goal::Way(s)) => format!("Talk to {} for {} · {}", s.npc, name(s.to), toward(s.x, s.y)),
+        Some(Goal::Cell(x, y)) => toward(x, y),
+        Some(Goal::Here) => "Here".to_string(),
+        None => "Off the route".to_string(),
+    };
+    let dest = match route.maps_left(map) {
+        0 => route.dest.label.clone(),
+        1 => format!("{} · next map", route.dest.label),
+        n => format!("{} · {n} maps", route.dest.label),
+    };
+    Some(NavReadout {
+        dest,
+        step,
+        walking: route.auto_walk,
+    })
+}
+
 fn place(game: &GameState) -> Option<Place> {
     let map = game.session.current_map.clone()?;
     let (x, y) = game.world.entities.player()?.movement.cell_position();
@@ -950,7 +986,6 @@ fn dispatch_window(
 mod tests {
     use super::*;
     use nostalre_game::minimap_mark::MarkAction;
-    use nostalre_game::navigation::{NavServices, NavTarget};
     use nostalre_game::party::PartyMember;
 
     fn member(aid: u32, name: &str, map: &str, leader: bool, live: bool) -> PartyMember {
@@ -1007,12 +1042,6 @@ mod tests {
         crimson.apply(77, 30, 40);
         // Ended early: rAthena's -1, -1, kept by its count but not drawn
         crimson.apply(78, -1, -1);
-        let navigation = Navigation {
-            map: "prontera".into(),
-            target: NavTarget::Cell { x: 150, y: 180 },
-            services: NavServices::default(),
-            hide_window: true,
-        };
         let markers = collect_minimap_markers(
             Some(&party),
             None,
@@ -1021,7 +1050,7 @@ mod tests {
                 marks: &marks,
                 crimson_marks: &crimson,
                 boss_mark: Some(&boss),
-                navigation: Some(&navigation),
+                route_goal: Some((150, 180)),
             },
             Some("prontera"),
             1,

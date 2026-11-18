@@ -188,6 +188,15 @@ impl WorldMapWindow {
         if let Some(map) = self.view.take_wanted() {
             self.request(Self::minimap_texture_path(&map), &mut events);
         }
+        // the way there: the HUD shows it, the map is out of the way
+        if let Some(map) = self.view.take_navigate() {
+            events.push(GameEvent::Navigate {
+                label: name(&map),
+                map,
+                cell: None,
+            });
+            self.close();
+        }
         ui.has_grf_textures = prev_grf;
         events
     }

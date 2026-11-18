@@ -709,8 +709,10 @@ pub struct GameState {
     pub prayer_lines: nostalre_game::prayer::PrayerLines,
     /// The last line sent and its repeats, for kRO's refusal of the same line a third time
     pub repeated_line: nostalre_game::chat_repeat::RepeatGuard,
-    /// An NPC's navigation guide (0x08e2), until the player reaches its cell or another comes
-    pub navigation: Option<nostalre_game::navigation::Navigation>,
+    /// The route followed (the world map's Navigate, a quest's, an NPC's guide, 0x08e2), until the player is there
+    pub route: Option<nostalre_game::navigation::Route>,
+    /// Auto-walk's path along the route
+    pub route_walk: crate::events::navigation::RouteWalk,
     /// The units the player's Crimson Marker marks (0x09c1), drawn on the minimap
     pub crimson_marks: nostalre_game::minimap_mark::CrimsonMarks,
     /// The map's MVP as last reported to a Convex Mirror.
@@ -843,7 +845,8 @@ impl GameState {
             minimap_marks: nostalre_game::minimap_mark::MinimapMarks::default(),
             prayer_lines: Default::default(),
             repeated_line: Default::default(),
-            navigation: None,
+            route: None,
+            route_walk: Default::default(),
             crimson_marks: nostalre_game::minimap_mark::CrimsonMarks::default(),
             boss_mark: None,
             show_digit: None,

@@ -385,28 +385,27 @@ impl App {
         self.add_msg_string_line(line.msg_id, args, line.color);
     }
 
-    /// An NPC's navigation guide (0x08e2), a first version of ours: where it points, said in chat, and its cell marked
-    /// on the minimap while on its map (kRO's own is its navigation window, 0x685be0, with routes from its data)
+    /// An NPC's navigation guide (0x08e2, a navigation link in its text): a route there, as kRO's navigation window
+    /// (0x685be0) plans one; a monster's guide goes to its map
     pub(super) fn handle_navigation_guide(
         &mut self,
         navigation: nostalre_game::navigation::Navigation,
     ) {
         use nostalre_game::navigation::NavTarget;
-        let map = self
-            .game
-            .data_table
-            .map_name
-            .as_ref()
-            .and_then(|t| t.display_name(&navigation.map))
-            .unwrap_or(&navigation.map)
-            .to_string();
-        let line = match navigation.target {
-            NavTarget::Cell { x, y } => format!("Navigation: {map} ({x}, {y})"),
-            NavTarget::Map => format!("Navigation: {map}"),
-            NavTarget::Monster { mob_id } => format!("Navigation: monster {mob_id} in {map}"),
+        let map = self.map_display_name(&navigation.map);
+        let (cell, label) = match navigation.target {
+            NavTarget::Cell { x, y } => (
+                Some((x.max(0) as u16, y.max(0) as u16)),
+                format!("{map} ({x}, {y})"),
+            ),
+            NavTarget::Map => (None, map),
+            NavTarget::Monster { .. } => (None, map),
         };
-        self.windows.chat_window.add_system(line);
-        self.game.navigation = Some(navigation);
+        self.start_route(nostalre_game::navigation::Destination {
+            map: navigation.map,
+            cell,
+            label,
+        });
     }
 
     pub(crate) fn add_msg_string_line(&mut self, msg_id: u16, args: &[&str], color: [f32; 4]) {
