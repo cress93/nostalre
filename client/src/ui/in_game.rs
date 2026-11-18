@@ -145,6 +145,8 @@ pub fn build_in_game_ui(
                 .refresh_face(base + i, ctx.character, face);
         }
     }
+    // the touch controls have the skills' buttons: no skill bar over the HP bars then
+    let touch_bar_off = windows.hud.shows_touch(ui.ctx.pad_labels);
     let placement = (windows.hud.is_modern() && !menu_open).then(|| {
         let rows = ctx.character.hotkeys.visible_rows() as usize;
         windows.hud.build(ui, &ctx, rows)
@@ -187,7 +189,7 @@ pub fn build_in_game_ui(
             .companion_skills
             .extend(h.skills.iter().cloned());
     }
-    if !menu_open {
+    if !menu_open && !(touch_bar_off && windows.hud.is_modern()) {
         events.extend(windows.hotkey_bar.build(ui, &mut ctx));
     }
 
