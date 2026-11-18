@@ -186,6 +186,8 @@ pub struct NpcShop {
     list_pick: usize,
     /// The list's category tab; `None` is All
     tab: Option<Category>,
+    /// The first item was picked for the shop just opened
+    first_picked: bool,
     /// A finger (or the mouse) held on the grid, until it lifts ([`NpcShop::swipe`])
     swipe: Option<Swipe>,
     /// The touch screen's Attack was pressed: the picked item goes to the basket ([`NpcShop::press_attack`])
@@ -243,6 +245,7 @@ impl NpcShop {
             basket_pick: 0,
             list_pick: 0,
             tab: None,
+            first_picked: false,
             swipe: None,
             attack_pressed: false,
         }
@@ -333,6 +336,13 @@ impl InGameWindow for NpcShop {
         }
 
         let mut events = Vec::new();
+        // a shop opens on its first item (the top left), so Attack and the stick work straight away
+        if !self.first_picked {
+            self.first_picked = true;
+            if self.shop.selected_index.is_none() {
+                self.shop.selected_index = self.list_indices().first().copied();
+            }
+        }
         if std::mem::take(&mut self.attack_pressed) {
             if let Some((_, dialog)) = self.qty_popup.as_mut() {
                 // a buy's prompt starts empty: Attack straight away is one
@@ -1402,6 +1412,7 @@ impl NpcShop {
         self.basket_pick = 0;
         self.list_pick = 0;
         self.tab = None;
+        self.first_picked = false;
         self.swipe = None;
         self.attack_pressed = false;
     }
@@ -1660,6 +1671,8 @@ mod tests {
     #[test]
     fn keys_pick_a_line_ask_its_amount_and_buy() {
         let mut shop_ui = NpcShop::new();
+        // nothing picked yet, as before the first frame's own pick
+        shop_ui.first_picked = true;
         shop_ui.shop.open_buy(
             100,
             vec![buy_line(501, "Orange Potion"), buy_line(502, "Red Potion")],
@@ -1756,6 +1769,8 @@ mod tests {
     #[test]
     fn a_swipe_up_scrolls_the_grid_and_neither_picks_nor_drags() {
         let mut shop_ui = NpcShop::new();
+        // nothing picked yet, as before the first frame's own pick
+        shop_ui.first_picked = true;
         shop_ui.shop.open_buy(100, many_lines(40));
         let mut state = StateCache::new();
         let mut frame = |shop_ui: &mut NpcShop, y: f32, pressed: bool, down: bool| {
@@ -1790,6 +1805,8 @@ mod tests {
     #[test]
     fn attack_puts_the_picked_item_in_the_basket_one_unless_told() {
         let mut shop_ui = NpcShop::new();
+        // nothing picked yet, as before the first frame's own pick
+        shop_ui.first_picked = true;
         shop_ui.shop.open_buy(100, many_lines(3));
         let mut state = StateCache::new();
         let mut character = Character::new();
@@ -1817,8 +1834,23 @@ mod tests {
     }
 
     #[test]
+    fn a_shop_opens_on_its_first_item() {
+        let mut shop_ui = NpcShop::new();
+        shop_ui.shop.open_buy(100, vec![buy_line(502, "Orange"), buy_line(501, "Apple")]);
+        let mut state = StateCache::new();
+        let mut character = Character::new();
+        let data = DataTable::new();
+        let mut ctx = UiContext::new(1024.0, 768.0);
+        let mut ui = test_frame(&mut ctx, &mut state);
+        shop_ui.build(&mut ui, &mut crate::BuildCtx::test(&mut character, &data));
+        assert_eq!(shop_ui.shop.selected_index, Some(1), "Apple, first by name");
+    }
+
+    #[test]
     fn up_and_down_move_a_row_of_the_grid() {
         let mut shop_ui = NpcShop::new();
+        // nothing picked yet, as before the first frame's own pick
+        shop_ui.first_picked = true;
         let names = ["A", "B", "C", "D", "E"];
         shop_ui.shop.open_buy(
             100,
@@ -1865,6 +1897,8 @@ mod tests {
             overcharge_price: 25,
         };
         let mut shop_ui = NpcShop::new();
+        // nothing picked yet, as before the first frame's own pick
+        shop_ui.first_picked = true;
         shop_ui.shop.open_sell(
             100,
             vec![
