@@ -5,6 +5,28 @@ use nostalre_ui_component::game::chat_window::ChatChannel;
 impl App {
     pub(super) fn handle_quest_list_received(&mut self, quests: Vec<Quest>) {
         self.game.quest_log.replace(quests);
+        // the server's list knows nothing of the quest board's
+        self.board_into_quest_log();
+    }
+
+    /// The quest board's quests taken (nostalRE's server) as quest log entries, first in it, so the quest window and
+    /// the HUD's list track them like any quest
+    pub(crate) fn board_into_quest_log(&mut self) {
+        use nostalre_game::questboard::{QUEST_ID, SLOTS};
+        let data = &self.game.data_table;
+        let entries = self
+            .game
+            .character
+            .board
+            .log_entries(|id| data.item_name_for(id, true));
+        let board_ids = QUEST_ID..QUEST_ID + SLOTS as u32;
+        self.game.quest_log.quests.retain(|q| !board_ids.contains(&q.id));
+        for (i, (quest, title, summary, description)) in entries.into_iter().enumerate() {
+            if let Some(display) = self.game.data_table.quest_display.as_mut() {
+                display.insert(quest.id, title, summary, description);
+            }
+            self.game.quest_log.quests.insert(i, quest);
+        }
     }
 
     pub(super) fn handle_quest_added(&mut self, quest: Quest) {

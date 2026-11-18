@@ -149,10 +149,29 @@ impl App {
         }
     }
 
+    /// The quest board's lines (npc/custom/questboard.txt), for the menu's Board screen, not for the chat: a board
+    /// talked to opens it
+    fn board_line(&mut self, message: &str) -> bool {
+        let board = &mut self.game.character.board;
+        if !board.apply(message) {
+            return false;
+        }
+        let open = std::mem::take(&mut board.open_asked);
+        // the quests taken go in the quest log, which the quest window and the HUD's list track
+        self.board_into_quest_log();
+        if open {
+            self.windows.menu.open_board();
+        }
+        true
+    }
+
     pub(super) fn handle_own_chat_message(&mut self, message: String) {
         // the server's word on the capture slots, for the menu's Monsters screen, not for the chat
         if let Some(slots) = nostalre_game::capture::CaptureSlots::parse(&message) {
             self.game.character.captures = slots;
+            return;
+        }
+        if self.board_line(&message) {
             return;
         }
         if let Some(bubble_text) = message.split(" : ").nth(1)
@@ -347,6 +366,9 @@ impl App {
         // the server's word on the capture slots (a script's dispbottom), for the Monsters screen, not the chat
         if let Some(slots) = nostalre_game::capture::CaptureSlots::parse(&message) {
             self.game.character.captures = slots;
+            return;
+        }
+        if self.board_line(&message) {
             return;
         }
         let key = self.game.world.entities.resolve_key(account_id);

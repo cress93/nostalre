@@ -54,6 +54,7 @@ pub mod keybinding;
 pub mod level_aura;
 pub mod lightmap;
 pub mod map_title;
+pub mod questboard;
 pub mod map_transition;
 pub mod mail;
 pub mod map_cloud;

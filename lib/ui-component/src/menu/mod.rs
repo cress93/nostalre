@@ -7,6 +7,7 @@ mod frame;
 mod home;
 mod item_detail;
 mod items;
+mod board;
 mod monsters;
 mod settings;
 mod skills;
@@ -193,6 +194,7 @@ enum Screen {
     Skills,
     Status,
     Monsters,
+    Board,
     Settings,
 }
 
@@ -213,6 +215,7 @@ pub struct Menu {
     skills: skills::Skills,
     status: status::Status,
     monsters: monsters::Monsters,
+    board: board::Board,
     settings: settings::Settings,
     textures: frame::Textures,
     /// A skill or item on its way onto the skill bar
@@ -241,6 +244,9 @@ impl Menu {
     fn set_screen(&mut self, screen: Screen) {
         if screen == Screen::Monsters && self.screen != Screen::Monsters {
             self.monsters.enter();
+        }
+        if screen == Screen::Board && self.screen != Screen::Board {
+            self.board.enter();
         }
         self.screen = screen;
         self.picker = None;
@@ -293,6 +299,14 @@ impl Menu {
     }
 
     /// Art the screens drew that the client has not been asked to load yet
+    /// A quest board was talked to: the menu opens on the Board, which is no command of its own (the quests
+    /// taken are in the quest window)
+    pub fn open_board(&mut self) {
+        self.open = true;
+        self.confirm = None;
+        self.set_screen(Screen::Board);
+    }
+
     /// The client built a monster's portrait (`nostalre_game::capture::portrait_key`), `w` by `h`
     pub fn portrait_built(&mut self, key: &str, w: u32, h: u32) {
         self.monsters.portrait_built(key, w, h);
@@ -430,7 +444,8 @@ impl InGameWindow for Menu {
         if left_inner {
             return Vec::new();
         }
-        if self.screen == Screen::Home {
+        // the Board came from a board, not from the menu: back is out
+        if self.screen == Screen::Home || self.screen == Screen::Board {
             self.close();
         } else {
             self.set_screen(Screen::Home);
@@ -493,6 +508,7 @@ impl InGameWindow for Menu {
                 Screen::Skills => self.skills.footer(ctx),
                 Screen::Status => self.status.footer(),
                 Screen::Monsters => self.monsters.footer(&ctx.character.captures),
+                Screen::Board => self.board.footer(&ctx.character.board),
                 Screen::Settings => self.settings.footer(),
             }
         };
@@ -566,6 +582,11 @@ impl InGameWindow for Menu {
                 self.monsters
                     .build(ui, ctx, area, &keys, textures, &mut events)
             }
+            Screen::Board => {
+                let textures = &mut self.textures;
+                self.board
+                    .build(ui, ctx, area, &keys, textures, &mut events)
+            }
             Screen::Settings => self.settings.build(ui, area, &keys, &mut events),
         }
         if let Some(what) = to_bar {
@@ -593,6 +614,7 @@ impl Menu {
             .iter()
             .find(|cmd| cmd.screen() == Some(self.screen))
             .map(|cmd| cmd.label())
+            .or((self.screen == Screen::Board).then_some("Quest Board"))
             .filter(|_| self.screen != Screen::Home);
         let info = match self.screen {
             Screen::Home | Screen::Settings => self
@@ -619,6 +641,11 @@ impl Menu {
                 let caught = c.captures.slots.iter().flatten().count();
                 format!("{caught} of {} slots", nostalre_game::capture::SLOTS)
             }
+            Screen::Board => format!(
+                "{} of {} quests",
+                c.board.active_count(),
+                nostalre_game::questboard::SLOTS
+            ),
         };
         (crumb, info)
     }

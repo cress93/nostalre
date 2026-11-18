@@ -25,6 +25,20 @@ impl QuestDisplayTable {
         Self { entries }
     }
 
+    /// A quest the game's tables do not have (the quest board's, `crate::questboard`), or its new text
+    pub fn insert(&mut self, id: u32, title: String, summary: String, description: String) {
+        self.entries.insert(
+            id,
+            QuestDisplay {
+                title,
+                icon_name: String::new(),
+                image_name: String::new(),
+                summary,
+                description,
+            },
+        );
+    }
+
     pub fn get(&self, id: u32) -> Option<&QuestDisplay> {
         self.entries.get(&id)
     }
