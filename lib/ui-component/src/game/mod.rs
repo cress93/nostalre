@@ -64,3 +64,4 @@ pub mod vending_setup_window;
 pub mod vending_shop_window;
 pub mod warp_list_window;
 pub mod world_map_window;
+pub mod world_view_panel;

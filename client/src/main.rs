@@ -999,6 +999,11 @@ impl ApplicationHandler for App {
                     );
                     self.game.data_table.map_name =
                         Some(nostalre_game::data_table::map_name_table::MapNameTable::load(&grf));
+                    // the world map's pictures sit beside the old one
+                    let ui_dir = nostalre_resources::ui::WORLDMAP
+                        .rsplit_once('/')
+                        .map_or(String::new(), |(dir, _)| format!("{dir}/"));
+                    self.game.data_table.worlds = nostalre_game::world_view::load(&grf, &ui_dir);
                     if let Ok(bytes) = grf.read_file(nostalre_resources::table::PET_TALK) {
                         self.game.data_table.pet_talk =
                             Some(nostalre_formats::pettalk::PetTalkTable::parse(&bytes));

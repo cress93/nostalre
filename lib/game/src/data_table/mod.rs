@@ -55,6 +55,8 @@ pub struct DataTable {
     pub quest_display: Option<QuestDisplayTable>,
     pub msg_string: Option<MsgStringTable>,
     pub map_position: Option<MapPositionTable>,
+    /// kRO's world maps, newest window (`crate::world_view`); empty when the game files lack them
+    pub worlds: Vec<crate::world_view::World>,
     pub map_name: Option<MapNameTable>,
     /// Loaded with the first garment drawn (six lub chunks, about 12 ms on the desktop).
     pub robe: std::cell::OnceCell<RobeTable>,
@@ -91,6 +93,7 @@ impl DataTable {
             pet_talk: None,
             quest_display: None,
             msg_string: None,
+            worlds: Vec::new(),
             map_position: None,
             map_name: None,
             robe: std::cell::OnceCell::new(),

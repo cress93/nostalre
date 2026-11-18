@@ -3499,6 +3499,14 @@ impl App {
                         _ => false,
                     };
                     self.windows.world_map_window.texture_loaded(&path, loaded);
+                    // a world's picture: its size places the maps on it
+                    if let Some((w, h)) = self
+                        .renderer
+                        .as_ref()
+                        .and_then(|r| r.texture_cache.texture_size(&path))
+                    {
+                        self.windows.world_map_window.image_sized(&path, w, h);
+                    }
                 }
                 GameEvent::RequestAddFriend { name } => {
                     self.channel

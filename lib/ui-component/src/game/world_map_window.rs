@@ -54,6 +54,8 @@ pub struct WorldMapWindow {
     /// Of those, the ones the client did load.
     loaded: Vec<String>,
     size: (f32, f32),
+    /// The newer view, when the game files have kRO's world maps
+    view: super::world_view_panel::WorldView,
 }
 
 impl Default for WorldMapWindow {
@@ -77,6 +79,7 @@ impl WorldMapWindow {
             requested: Vec::new(),
             loaded: Vec::new(),
             size: (IMAGE_W / 2.0, IMAGE_H / 2.0 + TITLE_H),
+            view: Default::default(),
         }
     }
 
@@ -91,6 +94,102 @@ impl WorldMapWindow {
     pub fn close(&mut self) {
         self.open = false;
         self.selected_map = None;
+        self.view.reset();
+    }
+
+    /// A world's picture was loaded, this big
+    pub fn image_sized(&mut self, path: &str, w: u32, h: u32) {
+        self.view.image_sized(path, w, h);
+    }
+
+    /// The newer view: a tab for each world, its picture with levels, dungeons and the picked map's monsters
+    fn build_worlds(&mut self, ui: &mut UiFrame, ctx: &mut BuildCtx) -> Vec<GameEvent> {
+        use super::world_view_panel::TABS_H;
+        let mut events = Vec::new();
+        let worlds = &ctx.data.worlds;
+        let shown = self.view.world(worlds, self.current_map.as_deref());
+        let world = &worlds[shown];
+        if !self.is_loaded(&world.image) {
+            self.request(world.image.clone(), &mut events);
+        }
+        let prev_grf = ui.has_grf_textures;
+        ui.has_grf_textures = self.has_grf_textures;
+        let grf = self.has_grf_textures;
+
+        let (img_w, img_h) = self.view.size_of(world);
+        let avail_w = (ui.ctx.screen_width - SCREEN_MARGIN * 2.0).max(64.0);
+        let avail_h = (ui.ctx.screen_height - SCREEN_MARGIN * 2.0 - TITLE_H - TABS_H).max(64.0);
+        let scale = (avail_w / img_w).min(avail_h / img_h);
+        let (map_w, map_h) = ((img_w * scale).floor().max(560.0).min(avail_w), (img_h * scale).floor());
+        let (win_w, win_h) = (map_w, map_h + TITLE_H + TABS_H);
+        self.size = (win_w, win_h);
+        let default_x = ((ui.ctx.screen_width - win_w) / 2.0).max(0.0).floor();
+        let default_y = ((ui.ctx.screen_height - win_h) / 2.0).max(0.0).floor();
+        let win = ui.window_at(WORLD_MAP_WINDOW_ID, win_w, win_h, TITLE_H, default_x, default_y);
+        let resp = ui.interact(WORLD_MAP_WINDOW_ID, Rect::new(win.x, win.y, win_w, win_h));
+        if resp.hovered() {
+            ui.any_interactive_hovered = true;
+        }
+
+        draw_titlebar(ui, win.x, win.y, win_w, TITLE_H, grf);
+        let name = |m: &str| -> String {
+            ctx.data
+                .map_name
+                .as_ref()
+                .and_then(|t| t.display_name(m))
+                .unwrap_or(m)
+                .to_string()
+        };
+        let title = match self.current_map.as_deref() {
+            Some(m) => format!("World Map - {} - {}", world.name, name(m)),
+            None => format!("World Map - {}", world.name),
+        };
+        ui.text(win.x + 20.0, win.y + TITLE_H - 5.0, &title, text_color(grf));
+        let close_rect = Rect::new(win.x + win_w - CLOSE_SIZE - 4.0, win.y + 4.0, CLOSE_SIZE, CLOSE_SIZE);
+        let close_resp = ui.interact(CLOSE_BTN_ID, close_rect);
+        draw_sys_button(
+            ui,
+            close_rect,
+            (CLOSE_SIZE, CLOSE_SIZE),
+            close_resp.hovered(),
+            grf,
+            CLOSE_ON_TEX,
+            CLOSE_OFF_TEX,
+            Some('x'),
+        );
+        if close_resp.clicked() {
+            self.close();
+            ui.has_grf_textures = prev_grf;
+            return events;
+        }
+
+        self.view.tabs(ui, worlds, shown, win.x, win.y + TITLE_H, win_w);
+        let area = Rect::new(win.x, win.y + TITLE_H + TABS_H, map_w, map_h);
+        let player = self
+            .player_position
+            .map(|(x, y)| (x, y, self.map_width, self.map_height));
+        let loaded = self.is_loaded(&world.image);
+        let pictures = &self.loaded;
+        let preview = |m: &str| {
+            let path = Self::minimap_texture_path(m);
+            pictures.contains(&path).then_some(path)
+        };
+        self.view.view(
+            ui,
+            world,
+            area,
+            loaded,
+            self.current_map.as_deref(),
+            player,
+            &name,
+            &preview,
+        );
+        // the panel's map's minimap, asked for once
+        if let Some(map) = self.view.take_wanted() {
+            self.request(Self::minimap_texture_path(&map), &mut events);
+        }
+        ui.has_grf_textures = prev_grf;
+        events
     }
 
     pub fn toggle(&mut self) {
@@ -243,6 +342,9 @@ impl InGameWindow for WorldMapWindow {
     fn build(&mut self, ui: &mut UiFrame, ctx: &mut BuildCtx) -> Vec<GameEvent> {
         if !self.open {
             return Vec::new();
+        }
+        if !ctx.data.worlds.is_empty() {
+            return self.build_worlds(ui, ctx);
         }
         let mut events = Vec::new();
         let image_loaded = self.is_loaded(WORLD_MAP_TEX);
