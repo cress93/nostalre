@@ -174,6 +174,10 @@ impl App {
         if self.board_line(&message) {
             return;
         }
+        // the Card Album's cards, for the menu's Album screen
+        if self.game.character.album.apply(&message) {
+            return;
+        }
         if let Some(bubble_text) = message.split(" : ").nth(1)
             && let Some(player_id) = self.game.world.entities.player_id()
             && let Some(entity) = self.game.world.entities.get_mut(player_id)

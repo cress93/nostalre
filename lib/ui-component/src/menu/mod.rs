@@ -1,6 +1,7 @@
 //! The frameless menu (`docs/nostalre-menu.md`): the HUD layout's full-screen menu, as old Final Fantasy
 //! games have one. Text straight on the darkened world, the commands down the right, each screen in the same
 //! frame. Escape opens it once nothing else wants the key; the game goes on underneath.
+mod album;
 mod bar_picker;
 mod equipment;
 mod frame;
@@ -63,6 +64,7 @@ enum Command {
     Quests,
     Companions,
     Monsters,
+    Album,
     Party,
     Guild,
     Friends,
@@ -74,7 +76,7 @@ enum Command {
 }
 
 /// The commands, the system ones after the gap
-const COMMANDS: [Command; 15] = [
+const COMMANDS: [Command; 16] = [
     Command::Items,
     Command::Equipment,
     Command::Skills,
@@ -82,6 +84,7 @@ const COMMANDS: [Command; 15] = [
     Command::Quests,
     Command::Companions,
     Command::Monsters,
+    Command::Album,
     Command::Party,
     Command::Guild,
     Command::Friends,
@@ -91,7 +94,7 @@ const COMMANDS: [Command; 15] = [
     Command::ExitGame,
     Command::Chat,
 ];
-const FIRST_SYSTEM: usize = 11;
+const FIRST_SYSTEM: usize = 12;
 
 impl Command {
     fn label(self) -> &'static str {
@@ -103,6 +106,7 @@ impl Command {
             Self::Quests => "Quests",
             Self::Companions => "Companions",
             Self::Monsters => "Monsters",
+            Self::Album => "Card Album",
             Self::Party => "Party",
             Self::Guild => "Guild",
             Self::Friends => "Friends",
@@ -123,6 +127,7 @@ impl Command {
             Self::Quests => "Active and finished quests.",
             Self::Companions => "Your pet, homunculus and mercenary.",
             Self::Monsters => "The monsters you caught: call them out to fight, or let them go.",
+            Self::Album => "The cards you have found, region by region, and what they earned.",
             Self::Party => "Members, invites and loot sharing.",
             Self::Guild => "Members, skills, alliances and emblem.",
             Self::Friends => "Friend list and whispers.",
@@ -157,6 +162,7 @@ impl Command {
             Self::Skills => Screen::Skills,
             Self::Status => Screen::Status,
             Self::Monsters => Screen::Monsters,
+            Self::Album => Screen::Album,
             Self::Settings => Screen::Settings,
             _ => return None,
         })
@@ -194,6 +200,7 @@ enum Screen {
     Skills,
     Status,
     Monsters,
+    Album,
     Board,
     Settings,
 }
@@ -216,6 +223,7 @@ pub struct Menu {
     status: status::Status,
     monsters: monsters::Monsters,
     board: board::Board,
+    album: album::Album,
     settings: settings::Settings,
     textures: frame::Textures,
     /// A skill or item on its way onto the skill bar
@@ -247,6 +255,9 @@ impl Menu {
         }
         if screen == Screen::Board && self.screen != Screen::Board {
             self.board.enter();
+        }
+        if screen == Screen::Album && self.screen != Screen::Album {
+            self.album.enter();
         }
         self.screen = screen;
         self.picker = None;
@@ -509,6 +520,7 @@ impl InGameWindow for Menu {
                 Screen::Status => self.status.footer(),
                 Screen::Monsters => self.monsters.footer(&ctx.character.captures),
                 Screen::Board => self.board.footer(&ctx.character.board),
+                Screen::Album => self.album.footer(&ctx.character.album),
                 Screen::Settings => self.settings.footer(),
             }
         };
@@ -587,6 +599,13 @@ impl InGameWindow for Menu {
                 self.board
                     .build(ui, ctx, area, &keys, textures, &mut events)
             }
+            Screen::Album => {
+                if self.album.build(ui, ctx, area, &keys, &mut events) {
+                    // a card's map to navigate to: the way there is on the HUD
+                    self.close();
+                    return events;
+                }
+            }
             Screen::Settings => self.settings.build(ui, area, &keys, &mut events),
         }
         if let Some(what) = to_bar {
@@ -641,6 +660,7 @@ impl Menu {
                 let caught = c.captures.slots.iter().flatten().count();
                 format!("{caught} of {} slots", nostalre_game::capture::SLOTS)
             }
+            Screen::Album => album::Album::summary(&c.album),
             Screen::Board => format!(
                 "{} of {} quests",
                 c.board.active_count(),

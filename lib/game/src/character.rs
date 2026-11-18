@@ -91,6 +91,8 @@ pub struct Character {
     pub captures: crate::capture::CaptureSlots,
     /// The quest board's cards and the quests taken (nostalRE's server)
     pub board: crate::questboard::QuestBoard,
+    /// The Card Album, the account's (nostalRE's server)
+    pub album: crate::card_album::CardAlbum,
     pub inventory: InventoryData,
     pub cart: CartData,
     pub storage: StorageData,
@@ -177,6 +179,7 @@ impl Character {
         Self {
             captures: Default::default(),
             board: Default::default(),
+            album: Default::default(),
             inventory: InventoryData::new(),
             cart: CartData::new(),
             storage: StorageData::new(),

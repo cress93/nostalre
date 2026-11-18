@@ -8,6 +8,8 @@ pub mod banner;
 pub mod book;
 pub mod boss_info;
 pub mod capture;
+pub mod card_album;
+pub mod card_album_tables;
 pub mod cast_scope;
 pub mod char_name;
 pub mod character;
