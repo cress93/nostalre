@@ -214,6 +214,9 @@ pub(crate) struct Gamepad {
     reset: bool,
     /// Last walk request: when, and the octant it went.
     walk: Option<(Instant, i32)>,
+    /// The touch stick stepping a dialog's choices or a shop's items: the way it is held (0 up, 1 down, 2 left,
+    /// 3 right) and when it steps again
+    stick_nav: Option<(u8, Instant)>,
     last_frame: Option<Instant>,
     /// The pad drives the cursor from here (logical px), seeded from the mouse position.
     cursor: Option<(f32, f32)>,
@@ -1051,6 +1054,39 @@ impl App {
         self.window_event(event_loop, window, event);
     }
 
+    /// The touch stick as the arrow keys while a dialog or shop is up: a step when it tilts, then one every
+    /// 150 ms after it has been held 400 ms
+    fn stick_nav(&mut self, (x, y): (f32, f32), now: Instant) {
+        const TILT: f32 = 0.5;
+        let dir = if x.abs() < TILT && y.abs() < TILT {
+            None
+        } else if y.abs() >= x.abs() {
+            Some(if y < 0.0 { 0 } else { 1 })
+        } else {
+            Some(if x < 0.0 { 2 } else { 3 })
+        };
+        let Some(dir) = dir else {
+            self.gamepad.stick_nav = None;
+            return;
+        };
+        let step = match self.gamepad.stick_nav {
+            Some((held, next)) if held == dir => {
+                if now < next {
+                    return;
+                }
+                now + Duration::from_millis(150)
+            }
+            _ => now + Duration::from_millis(400),
+        };
+        self.gamepad.stick_nav = Some((dir, step));
+        self.with_ui(|ui| match dir {
+            0 => ui.key_up = true,
+            1 => ui.key_down = true,
+            2 => ui.key_left = true,
+            _ => ui.key_right = true,
+        });
+    }
+
     /// Left stick: walk toward where it points, relative to the camera. A request goes out when the direction
     /// turns, else once per cell walked.
     fn gamepad_walk(&mut self, now: Instant) {
@@ -1058,7 +1094,14 @@ impl App {
         if x == 0.0 && y == 0.0 {
             (x, y) = self.windows.hud.touch_input().stick;
             (x, y) = (dead(x), dead(y));
+            // an NPC's dialog or shop up: the touch stick steps through it instead of walking
+            if self.windows.npc_dialog.dialog.is_open() || self.windows.npc_shop.shop.is_open() {
+                self.gamepad.walk = None;
+                self.stick_nav((x, y), now);
+                return;
+            }
         }
+        self.gamepad.stick_nav = None;
         if (x == 0.0 && y == 0.0) || self.game.session.app_state != AppState::InGame {
             self.gamepad.walk = None;
             return;
