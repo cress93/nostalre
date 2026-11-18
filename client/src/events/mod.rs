@@ -559,8 +559,11 @@ impl App {
                 GameEvent::NpcDialogNext { npc_id } => {
                     self.windows.npc_dialog.dialog.wait_for_next(npc_id);
                 }
-                GameEvent::NpcDialogClose { .. } => {
-                    if self.windows.npc_dialog.dialog.is_open() {
+                GameEvent::NpcDialogClose { npc_id } => {
+                    // rAthena closes the dialog of every script that ends attached to the player, a background
+                    // timer's too (quest board, capture): only the open dialog's own NPC closes it
+                    let dialog = &self.windows.npc_dialog.dialog;
+                    if dialog.is_open() && dialog.npc_id == npc_id {
                         self.windows.npc_dialog.dialog.wait_for_close();
                     }
                 }
