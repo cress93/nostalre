@@ -3068,6 +3068,9 @@ impl App {
                 GameEvent::RequestSendChat { message } => {
                     self.run_chat_command(&message);
                 }
+                GameEvent::RequestServerCommand { line } => {
+                    self.send_server_command(&line);
+                }
                 GameEvent::RequestSendWhisper { name, message } => {
                     if !self.admit_chat_line(&message) {
                         continue;

@@ -81,9 +81,50 @@ impl App {
     }
 
     pub(crate) fn preload_item_icons(&mut self, icon_paths: Vec<String>) {
+        // a monster's portrait is no file: it is built from its sprite
+        let (portraits, icon_paths): (Vec<String>, Vec<String>) = icon_paths
+            .into_iter()
+            .partition(|p| nostalre_game::capture::portrait_mob(p).is_some());
+        for key in portraits {
+            self.build_mob_portrait(&key);
+        }
         if let (Some(grf), Some(renderer)) = (&self.grf, &mut self.renderer) {
             let icon_refs: Vec<&str> = icon_paths.iter().map(|s| s.as_str()).collect();
             renderer.preload_textures(&icon_refs, grf);
         }
+    }
+
+    /// A monster's portrait for the menu (`nostalre_game::capture::portrait_key`): the first frame of its standing
+    /// pose, as its sprite has it
+    fn build_mob_portrait(&mut self, key: &str) {
+        let Some(mob_id) = nostalre_game::capture::portrait_mob(key) else {
+            return;
+        };
+        let (Some(grf), Some(renderer), Some(names)) =
+            (&self.grf, &mut self.renderer, &self.game.data_table.name)
+        else {
+            return;
+        };
+        let Some(sprite) = sprite_loader::load_entity_sprite_data(grf, names, mob_id) else {
+            tracing::warn!("No sprite for the portrait of monster {mob_id}");
+            return;
+        };
+        let body = &sprite.body;
+        let index = body
+            .act
+            .actions
+            .first()
+            .and_then(|action| action.motions.first())
+            .and_then(|motion| motion.clips.iter().find(|clip| clip.sprite_index >= 0))
+            .map_or(0, |clip| {
+                let rgba = usize::from(clip.sprite_type == 1);
+                clip.sprite_index as usize + rgba * body.indexed_count
+            });
+        let Some(image) = body.images.get(index).or_else(|| body.images.first()) else {
+            return;
+        };
+        let (w, h) = (image.width, image.height);
+        renderer.register_rgba_texture(key, &image.data, w, h);
+        self.windows.menu.portrait_built(key, w, h);
     }
 }

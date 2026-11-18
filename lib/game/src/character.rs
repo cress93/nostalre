@@ -87,6 +87,8 @@ impl Traits {
 }
 
 pub struct Character {
+    /// The monsters caught into the capture slots (nostalRE's server)
+    pub captures: crate::capture::CaptureSlots,
     pub inventory: InventoryData,
     pub cart: CartData,
     pub storage: StorageData,
@@ -171,6 +173,7 @@ impl Default for Character {
 impl Character {
     pub fn new() -> Self {
         Self {
+            captures: Default::default(),
             inventory: InventoryData::new(),
             cart: CartData::new(),
             storage: StorageData::new(),

@@ -7,6 +7,7 @@ pub mod autocounter;
 pub mod banner;
 pub mod book;
 pub mod boss_info;
+pub mod capture;
 pub mod cast_scope;
 pub mod char_name;
 pub mod character;

@@ -552,6 +552,10 @@ pub enum GameEvent {
     RequestSendChat {
         message: String,
     },
+    /// A line for the server only, from a screen's buttons (`@capture call 1`): never refused as a repeat
+    RequestServerCommand {
+        line: String,
+    },
     RequestEmotion {
         emote_type: u8,
     },

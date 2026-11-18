@@ -62,6 +62,21 @@ impl App {
         }
     }
 
+    /// A command a screen sends the server for the player (`@capture call 1`): said like a line of chat, but not
+    /// counted toward kRO's same-line refusal, which a few presses of one button would reach
+    pub(crate) fn send_server_command(&mut self, line: &str) {
+        let char_name = self
+            .game
+            .session
+            .selected_character
+            .as_ref()
+            .map(|c| c.name.as_str())
+            .unwrap_or("Unknown");
+        let pv = self.active_packetver;
+        self.channel
+            .send_packet(build_chat_packet(&format!("{char_name} : {line}"), pv));
+    }
+
     /// Whether a line may be sent: kRO refuses the same line a third time in a row, on any channel, with line 49 in
     /// red (0x7899d0)
     pub(crate) fn admit_chat_line(&mut self, line: &str) -> bool {

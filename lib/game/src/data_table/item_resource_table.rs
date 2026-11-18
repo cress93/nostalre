@@ -116,6 +116,16 @@ impl ItemResourceTable {
         tracing::info!(cards = filled, "blank card icons");
     }
 
+    /// `item_id` drawn with `like`'s icon and drop sprite: an item the game's tables do not have
+    pub fn borrow_icon(&mut self, item_id: u32, like: u32) {
+        if let Some(name) = self.identified_entries.get(&like).cloned() {
+            self.identified_entries.insert(item_id, name);
+        }
+        if let Some(name) = self.unidentified_entries.get(&like).cloned() {
+            self.unidentified_entries.insert(item_id, name);
+        }
+    }
+
     pub fn get_resource_name(&self, item_id: u32) -> Option<&str> {
         self.get_resource_name_for(item_id, true)
     }

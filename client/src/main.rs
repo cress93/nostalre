@@ -976,6 +976,8 @@ impl ApplicationHandler for App {
                     self.game.data_table.card_illustration =
                         Some(CardIllustrationTable::load(&grf));
                     self.game.data_table.item_description = Some(ItemDescriptionTable::load(&grf));
+                    // nostalRE's own items, which the game's tables do not know
+                    nostalre_game::capture::add_ball_items(&mut self.game.data_table);
                     self.game.data_table.skill_name = Some(SkillNameTable::load(&grf));
                     self.game.data_table.skill_description =
                         Some(SkillDescriptionTable::load(&grf));

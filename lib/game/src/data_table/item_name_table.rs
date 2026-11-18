@@ -59,6 +59,12 @@ impl ItemNameTable {
         });
     }
 
+    /// An item the game's tables do not have (nostalRE's own: `crate::capture::BALLS`), named the same both ways
+    pub fn insert(&mut self, item_id: u32, name: &str) {
+        self.identified_entries.insert(item_id, name.to_string());
+        self.unidentified_entries.insert(item_id, name.to_string());
+    }
+
     pub fn get_name(&self, item_id: u32) -> Option<&str> {
         self.identified_entries.get(&item_id).map(|s| s.as_str())
     }

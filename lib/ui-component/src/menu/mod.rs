@@ -7,6 +7,7 @@ mod frame;
 mod home;
 mod item_detail;
 mod items;
+mod monsters;
 mod settings;
 mod skills;
 mod status;
@@ -60,6 +61,7 @@ enum Command {
     Status,
     Quests,
     Companions,
+    Monsters,
     Party,
     Guild,
     Friends,
@@ -71,13 +73,14 @@ enum Command {
 }
 
 /// The commands, the system ones after the gap
-const COMMANDS: [Command; 14] = [
+const COMMANDS: [Command; 15] = [
     Command::Items,
     Command::Equipment,
     Command::Skills,
     Command::Status,
     Command::Quests,
     Command::Companions,
+    Command::Monsters,
     Command::Party,
     Command::Guild,
     Command::Friends,
@@ -87,7 +90,7 @@ const COMMANDS: [Command; 14] = [
     Command::ExitGame,
     Command::Chat,
 ];
-const FIRST_SYSTEM: usize = 10;
+const FIRST_SYSTEM: usize = 11;
 
 impl Command {
     fn label(self) -> &'static str {
@@ -98,6 +101,7 @@ impl Command {
             Self::Status => "Status",
             Self::Quests => "Quests",
             Self::Companions => "Companions",
+            Self::Monsters => "Monsters",
             Self::Party => "Party",
             Self::Guild => "Guild",
             Self::Friends => "Friends",
@@ -117,6 +121,7 @@ impl Command {
             Self::Status => "Stats, traits and status points.",
             Self::Quests => "Active and finished quests.",
             Self::Companions => "Your pet, homunculus and mercenary.",
+            Self::Monsters => "The monsters you caught: call them out to fight, or let them go.",
             Self::Party => "Members, invites and loot sharing.",
             Self::Guild => "Members, skills, alliances and emblem.",
             Self::Friends => "Friend list and whispers.",
@@ -150,6 +155,7 @@ impl Command {
             Self::Equipment => Screen::Equipment,
             Self::Skills => Screen::Skills,
             Self::Status => Screen::Status,
+            Self::Monsters => Screen::Monsters,
             Self::Settings => Screen::Settings,
             _ => return None,
         })
@@ -186,6 +192,7 @@ enum Screen {
     Equipment,
     Skills,
     Status,
+    Monsters,
     Settings,
 }
 
@@ -205,6 +212,7 @@ pub struct Menu {
     equipment: equipment::Equipment,
     skills: skills::Skills,
     status: status::Status,
+    monsters: monsters::Monsters,
     settings: settings::Settings,
     textures: frame::Textures,
     /// A skill or item on its way onto the skill bar
@@ -231,6 +239,9 @@ impl Menu {
 
     /// Another page: what the last one was asking goes away with it
     fn set_screen(&mut self, screen: Screen) {
+        if screen == Screen::Monsters && self.screen != Screen::Monsters {
+            self.monsters.enter();
+        }
         self.screen = screen;
         self.picker = None;
         self.items.back();
@@ -282,6 +293,11 @@ impl Menu {
     }
 
     /// Art the screens drew that the client has not been asked to load yet
+    /// The client built a monster's portrait (`nostalre_game::capture::portrait_key`), `w` by `h`
+    pub fn portrait_built(&mut self, key: &str, w: u32, h: u32) {
+        self.monsters.portrait_built(key, w, h);
+    }
+
     pub fn take_wanted_textures(&mut self) -> Vec<String> {
         self.textures.take()
     }
@@ -476,6 +492,7 @@ impl InGameWindow for Menu {
                 Screen::Equipment => self.equipment.footer(ctx),
                 Screen::Skills => self.skills.footer(ctx),
                 Screen::Status => self.status.footer(),
+                Screen::Monsters => self.monsters.footer(&ctx.character.captures),
                 Screen::Settings => self.settings.footer(),
             }
         };
@@ -544,6 +561,11 @@ impl InGameWindow for Menu {
                     .build(ui, ctx, area, &keys, textures, out, &mut events)
             }
             Screen::Status => self.status.build(ui, ctx, area, &keys, &mut events),
+            Screen::Monsters => {
+                let textures = &mut self.textures;
+                self.monsters
+                    .build(ui, ctx, area, &keys, textures, &mut events)
+            }
             Screen::Settings => self.settings.build(ui, area, &keys, &mut events),
         }
         if let Some(what) = to_bar {
@@ -593,6 +615,10 @@ impl Menu {
             ),
             Screen::Skills => self.skills.summary(c.skill_point),
             Screen::Status => format!("Status points {}", c.status_point),
+            Screen::Monsters => {
+                let caught = c.captures.slots.iter().flatten().count();
+                format!("{caught} of {} slots", nostalre_game::capture::SLOTS)
+            }
         };
         (crumb, info)
     }

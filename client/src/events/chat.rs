@@ -150,6 +150,11 @@ impl App {
     }
 
     pub(super) fn handle_own_chat_message(&mut self, message: String) {
+        // the server's word on the capture slots, for the menu's Monsters screen, not for the chat
+        if let Some(slots) = nostalre_game::capture::CaptureSlots::parse(&message) {
+            self.game.character.captures = slots;
+            return;
+        }
         if let Some(bubble_text) = message.split(" : ").nth(1)
             && let Some(player_id) = self.game.world.entities.player_id()
             && let Some(entity) = self.game.world.entities.get_mut(player_id)
@@ -339,6 +344,11 @@ impl App {
         color: u32,
         message: String,
     ) {
+        // the server's word on the capture slots (a script's dispbottom), for the Monsters screen, not the chat
+        if let Some(slots) = nostalre_game::capture::CaptureSlots::parse(&message) {
+            self.game.character.captures = slots;
+            return;
+        }
         let key = self.game.world.entities.resolve_key(account_id);
         if let Some(entity) = self.game.world.entities.get_mut(key) {
             entity.chat_bubble = Some(ChatBubbleState::new(message.clone()));

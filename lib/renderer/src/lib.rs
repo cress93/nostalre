@@ -1211,6 +1211,23 @@ impl Renderer {
         all_loaded
     }
 
+    /// Registers an RGBA image (`w` by `h`) as the texture `key`, for what is built in code: a monster's portrait
+    pub fn register_rgba_texture(&mut self, key: &str, rgba: &[u8], w: u32, h: u32) {
+        let bind_group = texture::create_texture_bind_group_from_rgba(
+            &self.device.device,
+            &self.device.queue,
+            rgba,
+            w,
+            h,
+            &self.texture_cache.bind_group_layout,
+            key,
+            wgpu::FilterMode::Linear,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::AddressMode::ClampToEdge,
+        );
+        self.texture_cache.insert(key, bind_group, w, h);
+    }
+
     /// Builds a Graffiti message decal and registers it under `key`. Returns false
     /// when the alphabet atlas is missing from the GRF.
     pub fn build_graffiti_texture(&mut self, key: &str, message: &str, grf: &GrfArchive) -> bool {

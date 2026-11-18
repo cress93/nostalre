@@ -44,6 +44,12 @@ impl ItemDescriptionTable {
         }
     }
 
+    /// An item the game's tables do not have, described the same both ways
+    pub fn insert(&mut self, item_id: u32, lines: Vec<String>) {
+        self.identified.insert(item_id, lines.clone());
+        self.unidentified.insert(item_id, lines);
+    }
+
     pub fn get(&self, item_id: u32, is_identified: bool) -> Option<&[String]> {
         if is_identified {
             self.identified.get(&item_id).map(|v| v.as_slice())
